@@ -1,0 +1,28 @@
+services:
+  indomitus_ground_station:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        ROS_DISTRO: humble
+    image: indomitus-ground-station:humble
+    container_name: indomitus_ground_station
+    networks:
+      - ros_network
+    stdin_open: true      # -i
+    tty: true             # -t
+    environment:
+      - ROS_DOMAIN_ID=42
+      - ROS_LOCALHOST_ONLY=1
+    volumes:
+      - ./:/work:rw
+      - ./src:/opt/ws/src:rw
+    devices:
+      - "/dev/ttyACM0:/dev/ttyACM0"
+
+networks:
+  ros_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.25.0.0/16
