@@ -14,11 +14,15 @@ services:
     environment:
       - ROS_DOMAIN_ID=42
       - ROS_LOCALHOST_ONLY=1
+      - SERIAL_PORT=${SERIAL_PORT:-/dev/ttyACM0}
     volumes:
       - ./:/work:rw
       - ./src:/opt/ws/src:rw
+    # Use SERIAL_PORT environment variable to override the default device.
+    # To make this optional and avoid failures if the device is missing, 
+    # you can set SERIAL_PORT=/dev/null in your environment or a .env file.
     devices:
-      - "/dev/ttyACM0:/dev/ttyACM0"
+      - "${SERIAL_PORT:-/dev/ttyACM0}:${SERIAL_PORT:-/dev/ttyACM0}"
 
 networks:
   ros_network:

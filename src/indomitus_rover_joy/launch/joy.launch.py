@@ -1,14 +1,23 @@
 from launch import LaunchDescription
 from launch_ros.actions import Node
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration, EnvironmentVariable
 
 def generate_launch_description():
+    port_arg = DeclareLaunchArgument(
+        'port',
+        default_value=EnvironmentVariable('SERIAL_PORT', default_value='/dev/ttyACM0'),
+        description='Serial port for the joystick'
+    )
+
     return LaunchDescription([
+        port_arg,
         Node(
             package='indomitus_rover_joy',
             executable='serial_joy_node',
             name='serial_joy_node',
             parameters=[{
-                'port': '/dev/ttyACM0',
+                'port': LaunchConfiguration('port'),
                 'baudrate': 115200,
                 'adc_max': 4095,
             }],
@@ -33,10 +42,7 @@ def generate_launch_description():
             parameters=[{
                 'linear_x_axis': 1,
                 'linear_y_axis': 0,
-                'linear_z_axis': 4,
-                'angular_x_axis': 3,
                 'angular_y_axis': 2,
-                'angular_z_axis': 5,
                 'linear_scale': 1.0,
                 'angular_scale': 1.0,
                 'frame_id': 'base_link',
