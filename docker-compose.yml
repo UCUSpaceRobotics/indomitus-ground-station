@@ -18,11 +18,9 @@ services:
     volumes:
       - ./:/work:rw
       - ./src:/opt/ws/src:rw
-    # Use SERIAL_PORT environment variable to override the default device.
-    # To make this optional and avoid failures if the device is missing, 
-    # you can set SERIAL_PORT=/dev/null in your environment or a .env file.
-    devices:
-      - "${SERIAL_PORT:-/dev/ttyACM0}:${SERIAL_PORT:-/dev/ttyACM0}"
+      - /dev:/dev
+    group_add:
+      - dialout
 
 networks:
   ros_network:

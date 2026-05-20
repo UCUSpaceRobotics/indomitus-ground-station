@@ -25,16 +25,14 @@ ros2 launch indomitus_rover_joy joy.launch.py
 ## Configuration
 
 ### Serial Port
+The system is configured to mount `/dev` and has permissions via the `dialout` group. This means:
+1. **The container starts even if the device is not connected.**
+2. **Hot-plugging is supported** (you can plug the device in after the container is running).
+
 If your device is on a different port (e.g., `/dev/ttyUSB0`), you can specify it using the `SERIAL_PORT` environment variable:
 
 ```bash
 SERIAL_PORT=/dev/ttyUSB0 docker-compose up -d
-```
-
-To run the container without a hardware device connected (to avoid Docker errors), set the port to `/dev/null`:
-
-```bash
-SERIAL_PORT=/dev/null docker-compose up -d
 ```
 
 ### Launch Parameters
