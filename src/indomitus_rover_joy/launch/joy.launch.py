@@ -19,7 +19,7 @@ def generate_launch_description():
             parameters=[{
                 'port': LaunchConfiguration('port'),
                 'baudrate': 115200,
-                'adc_max': 4095,
+                'axis_max': 100.0,
             }],
             output='screen'
         ),
@@ -42,7 +42,6 @@ def generate_launch_description():
             parameters=[{
                 'linear_x_axis': 1,
                 'linear_y_axis': 0,
-                'angular_y_axis': 2,
                 'linear_scale': 1.0,
                 'angular_scale': 1.0,
                 'frame_id': 'base_link',

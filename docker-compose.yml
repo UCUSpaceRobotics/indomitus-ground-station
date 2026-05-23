@@ -11,6 +11,7 @@ services:
       - ros_network
     stdin_open: true      # -i
     tty: true             # -t
+    privileged: true
     environment:
       - ROS_DOMAIN_ID=42
       - ROS_LOCALHOST_ONLY=1

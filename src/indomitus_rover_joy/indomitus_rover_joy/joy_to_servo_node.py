@@ -10,7 +10,7 @@ class JoyToServoNode(Node):
         # Parameters for Cartesian Control
         self.declare_parameter('linear_x_axis', 1)
         self.declare_parameter('linear_y_axis', 0)
-        self.declare_parameter('linear_z_axis', 4) # Example axis
+        self.declare_parameter('linear_z_axis', 4)
         self.declare_parameter('angular_x_axis', 3)
         self.declare_parameter('angular_y_axis', 2)
         self.declare_parameter('angular_z_axis', 5)
