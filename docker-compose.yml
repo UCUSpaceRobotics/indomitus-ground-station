@@ -21,7 +21,10 @@ services:
       # run, nodes on different domains simply never see each other.
       - ROS_DOMAIN_ID=42
       - ROS_LOCALHOST_ONLY=0
-      - SERIAL_PORT=${SERIAL_PORT:-/dev/ttyACM0}
+      # Two ESP32s: the joystick board (joysticks + its own switches) and the
+      # button board. Both enumerate as /dev/ttyACM*, order depends on plug-in.
+      - JOY_BOARD_PORT=${JOY_BOARD_PORT:-/dev/ttyACM0}
+      - BUTTON_BOARD_PORT=${BUTTON_BOARD_PORT:-/dev/ttyACM1}
     volumes:
       - ./:/work:rw
       - ./src:/opt/ws/src:rw
