@@ -31,7 +31,6 @@ services:
       - /dev:/dev
     group_add:
       - dialout
-    # No `ports:` — with host networking a server in the container binds the
-    # host's port directly, reachable from localhost and the LAN alike.
-    # Publishing a port here would be rejected as incompatible with
-    # network_mode: host.
+    # No `ports:` — with host networking rosbridge binds the host's :9090
+    # directly, reachable from localhost and the LAN alike. Publishing a port
+    # here would be rejected as incompatible with network_mode: host.

@@ -176,7 +176,31 @@ button, which calls `/controller_manager/set_hardware_component_state` and
 `/controller_manager/switch_controller`. The ground station does not do this
 yet — see below.
 
+## Operator Console (Web UI)
+
+`ui/` holds the browser console the operator drives from: camera wall, live
+telemetry, joystick command path and the rover log. It talks to ROS over
+`rosbridge_websocket` (port 9090, already published by `docker-compose.yml`) and
+takes camera video from `web_video_server`.
+
+```bash
+cd ui
+npm install
+npm run dev     # http://localhost:5173, also reachable from the LAN
+```
+
+Inside the container, alongside the joystick launch:
+
+```bash
+ros2 launch rosbridge_server rosbridge_websocket_launch.xml
+ros2 run web_video_server web_video_server
+```
+
+See `ui/README.md` for configuration and `ui/COMMANDS.md` for the full command
+list.
+
 ## Project Structure
 - `src/indomitus_rover_joy`: ROS 2 package for joystick serial bridge and message conversion.
 - `src/indomitus_rover_bringup`: Top-level launch configurations.
 - `docker/`: Dockerfile and entrypoint scripts.
+- `ui/`: React operator console (rosbridge + web_video_server).
