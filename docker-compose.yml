@@ -7,14 +7,20 @@ services:
         ROS_DISTRO: humble
     image: indomitus-ground-station:humble
     container_name: indomitus_ground_station
-    networks:
-      - ros_network
+    # DDS discovery is multicast and does not cross a docker bridge, so a
+    # bridged container cannot see the rover (or the Gazebo sim, which also runs
+    # host-networked) even on the same machine. Host networking is what the
+    # rover-core containers use; matching it is what makes them peers.
+    network_mode: host
     stdin_open: true      # -i
     tty: true             # -t
     privileged: true
     environment:
+      # Must match the rover. rover-core's compose files also use 42, but the
+      # rover README lists 132 for the Jetson container — check before a field
+      # run, nodes on different domains simply never see each other.
       - ROS_DOMAIN_ID=42
-      - ROS_LOCALHOST_ONLY=1
+      - ROS_LOCALHOST_ONLY=0
       - SERIAL_PORT=${SERIAL_PORT:-/dev/ttyACM0}
     volumes:
       - ./:/work:rw
@@ -22,10 +28,7 @@ services:
       - /dev:/dev
     group_add:
       - dialout
-
-networks:
-  ros_network:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.25.0.0/16
+    # No `ports:` — with host networking a server in the container binds the
+    # host's port directly, reachable from localhost and the LAN alike.
+    # Publishing a port here would be rejected as incompatible with
+    # network_mode: host.
