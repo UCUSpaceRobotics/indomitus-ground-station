@@ -1,4 +1,5 @@
 import rclpy
+from rcl_interfaces.msg import SetParametersResult
 from rclpy.node import Node
 from sensor_msgs.msg import Joy
 from geometry_msgs.msg import Twist
@@ -30,9 +31,37 @@ class JoyToCmdVelNode(Node):
         # stick values can never disagree). -1 disables gating.
         self.declare_parameter('mode_switch_index', 0)
         self.declare_parameter('mode_switch_value', 1)
+        # Ceiling on how often a Twist goes out, independent of the /joy rate.
+        # The sticks run at 200 Hz so the console feels responsive, but every
+        # Twist is a packet over the rover link — and eventually over the LoRa
+        # fallback, which cannot carry 200 Hz. 0.0 publishes on every message.
+        #
+        # This throttles only the steady stream. Both stop paths (mode handover
+        # and the watchdog) bypass it: a stop must never wait for a rate limit.
+        self.declare_parameter('publish_rate', 50.0)
 
         self.mode_switch_index = self.get_parameter('mode_switch_index').get_parameter_value().integer_value
         self.mode_switch_value = self.get_parameter('mode_switch_value').get_parameter_value().integer_value
+
+        publish_rate = self.get_parameter('publish_rate').get_parameter_value().double_value
+        self.min_publish_period = 1.0 / publish_rate if publish_rate > 0.0 else 0.0
+        # Deadline for the next Twist, in seconds on the node clock. Advancing a
+        # deadline rather than measuring elapsed-since-last-publish is what makes
+        # a cap at or above the input rate a true no-op: with a plain
+        # "skip if elapsed < period" test, jitter in the arrival interval drops
+        # every frame that lands early and the losses compound — a 50 Hz cap on
+        # a 47.7 Hz stream measured 31.9 Hz.
+        self.next_publish_deadline = None
+
+        # Cached rather than read per callback: get_parameter() on every axis of
+        # every message is 6 lookups per Twist, which at 200 Hz is pure
+        # overhead. _on_set_parameters keeps runtime retuning working.
+        self.axes = {}
+        self.scales = {}
+        for name in ('linear_x', 'linear_y', 'angular_z'):
+            self.axes[name] = self.get_parameter(f'{name}_axis').get_parameter_value().integer_value
+            self.scales[name] = self.get_parameter(f'{name}_scale').get_parameter_value().double_value
+        self.add_on_set_parameters_callback(self._on_set_parameters)
 
         self.joy_timeout = self.get_parameter('joy_timeout').get_parameter_value().double_value
         self.last_joy_time = None
@@ -53,6 +82,18 @@ class JoyToCmdVelNode(Node):
 
         self.get_logger().info("Joy to CmdVel Node started")
 
+    def _on_set_parameters(self, params):
+        for param in params:
+            for name in ('linear_x', 'linear_y', 'angular_z'):
+                if param.name == f'{name}_axis':
+                    self.axes[name] = int(param.value)
+                elif param.name == f'{name}_scale':
+                    self.scales[name] = float(param.value)
+            if param.name == 'publish_rate':
+                rate = float(param.value)
+                self.min_publish_period = 1.0 / rate if rate > 0.0 else 0.0
+        return SetParametersResult(successful=True)
+
     def mode_selected(self, buttons):
         if self.mode_switch_index < 0:
             return True
@@ -69,20 +110,33 @@ class JoyToCmdVelNode(Node):
             if not self.stopped:
                 self.publisher_.publish(Twist())
                 self.stopped = True
+                self.next_publish_deadline = None
                 self.get_logger().info('Drive mode deselected — rover stopped')
             return
+
+        # Rate limit before building anything. Checked after the stop path above
+        # so a handover always gets through immediately.
+        now = self.get_clock().now().nanoseconds / 1e9
+        if self.min_publish_period > 0.0:
+            if self.next_publish_deadline is None:
+                self.next_publish_deadline = now
+            if now < self.next_publish_deadline:
+                return
+            # max() clamps the catch-up burst that would otherwise follow a gap
+            # (mode handover, board unplugged) where the deadline fell behind.
+            self.next_publish_deadline = max(
+                now, self.next_publish_deadline + self.min_publish_period)
 
         twist = Twist()
         num_axes = len(msg.axes)
 
-        def get_axis_val(param_name, scale_param_name):
-            idx = self.get_parameter(param_name).get_parameter_value().integer_value
-            scale = self.get_parameter(scale_param_name).get_parameter_value().double_value
-            return msg.axes[idx] * scale if 0 <= idx < num_axes else 0.0
+        def get_axis_val(name):
+            idx = self.axes[name]
+            return msg.axes[idx] * self.scales[name] if 0 <= idx < num_axes else 0.0
 
-        twist.linear.x = get_axis_val('linear_x_axis', 'linear_x_scale')
-        twist.linear.y = get_axis_val('linear_y_axis', 'linear_y_scale')
-        twist.angular.z = get_axis_val('angular_z_axis', 'angular_z_scale')
+        twist.linear.x = get_axis_val('linear_x')
+        twist.linear.y = get_axis_val('linear_y')
+        twist.angular.z = get_axis_val('angular_z')
 
         self.stopped = False
         self.publisher_.publish(twist)
@@ -98,6 +152,7 @@ class JoyToCmdVelNode(Node):
         self.get_logger().warn(f"No joy message for {age:.2f}s, commanding stop")
         self.publisher_.publish(Twist())
         self.stopped = True
+        self.next_publish_deadline = None
 
 
 def main(args=None):

@@ -33,9 +33,10 @@ from collections import deque
 # --- link state thresholds -------------------------------------------------
 #
 # These drive the reported state only; the consumer applies its own hysteresis
-# before acting. Values are starting points measured on 2.4 GHz at close range
-# and MUST be re-measured at distance on the competition band before they mean
-# anything - see the note in mast/README.md.
+# before acting. Values are starting points taken at bench range (~1 m, -27 dBm
+# on 5 GHz ch36) and MUST be re-measured at distance before they mean anything.
+# Nothing here has ever seen a marginal link, which is the only regime the
+# thresholds actually exist to classify.
 SIGNAL_DEGRADED_DBM = -75.0   # 802.11 gets unreliable well before the link drops
 SIGNAL_DOWN_DBM = -85.0
 LOSS_DEGRADED_PCT = 20.0

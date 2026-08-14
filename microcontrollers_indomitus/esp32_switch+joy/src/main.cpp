@@ -27,12 +27,47 @@ static const uint8_t NUM_JOY_AXES = sizeof(JOY_PINS) / sizeof(JOY_PINS[0]);
 static const int ADC_MAX = 4095; // 12-bit ADC
 
 // Exponential moving average: smaller = smoother but slower to react.
-static const float EMA_ALPHA = 0.4f;
+//
+// Alpha is tied to the sample period and must be rescaled whenever
+// POLL_INTERVAL_MS changes, or the filtering silently changes with it. The
+// time constant is tau = -dt / ln(1 - alpha); the original 20 ms / 0.4 pair
+// gives tau = 39 ms, and 5 ms / 0.12 reproduces it. Leaving alpha at 0.4 while
+// sampling 4x faster would cut tau to 10 ms and let ADC noise straight through
+// — visible as stick creep just outside the deadzone.
+static const float EMA_ALPHA = 0.12f;
 static float joySmoothed[NUM_JOY_AXES];
 
 // ---------- UART ----------
-static const uint32_t UART_BAUD = 115200;
-static const uint32_t POLL_INTERVAL_MS = 20;
+// 115200 could not carry this: a 35-byte line costs 3.0 ms on the wire there,
+// so 200 Hz would sit at 60% utilisation and any hiccup would block
+// Serial.print (and therefore the sample loop). At 921600 the same line costs
+// 0.38 ms — under 8% loaded. The CH343 bridge on this DevKitC handles it.
+//
+// This MUST match `baudrate` in joy.launch.py. Flash one without the other and
+// nothing parses.
+static const uint32_t UART_BAUD = 921600;
+static const uint32_t POLL_INTERVAL_MS = 5;
+
+// ---------- Switch debounce ----------
+// Same 4-consecutive-reads filter the button board uses, for the same reason: a
+// mechanical toggle bounces for 1-10 ms, and at a 5 ms poll that lands several
+// alternating samples inside one flick. Undebounced they reach Joy.buttons, and
+// since switch 0 picks rover-vs-arm, every bounce is a mode handover — one flick
+// spams the drive and servo nodes with stop/resume.
+//
+// Nothing downstream filters this, so it has to be done here. Note the poll rate
+// is what exposed it: at the old 20 ms period a bounce fit between samples and
+// the missing debounce never showed. Raising the rate again shortens the 20 ms
+// window this buys, so keep the two in step.
+//
+// Unlike the button board, which sends only on a debounced change, a frame goes
+// out here every poll because the axes need it. So the filter feeds
+// `stableSwitches` and every frame carries the last stable word, rather than
+// gating the send.
+static const uint8_t DEBOUNCE_STABLE_READS = 4; // 4 x 5 ms = 20 ms stable
+static uint16_t stableSwitches = 0;
+static uint16_t candidateSwitches = 0;
+static uint8_t switchMatchCount = 0;
 
 void setPCF8575InputMode(uint8_t addr) {
   // Writing 1s puts every pin in input mode (weak pull-up, quasi-bidirectional).
@@ -68,32 +103,69 @@ void setup() {
     joySmoothed[i] = analogRead(JOY_PINS[i]);
   }
 
-  Serial.println("PCF8575 switch test started");
+  // Seed the debounce from a real read, so the first 20 ms of frames report the
+  // panel's actual position instead of an all-zero placeholder. A spurious
+  // "switch 0 off" at startup would otherwise read as a mode handover.
+  uint16_t initial;
+  if (readPCF8575(PCF_ADDR, initial)) {
+    stableSwitches = candidateSwitches = initial;
+    switchMatchCount = DEBOUNCE_STABLE_READS;
+  }
+
+  Serial.println("PCF8575 switch + joystick reader started @ 200 Hz");
 }
 
 void loop() {
+  // millis() gating rather than delay(): delay() would add the ~0.8 ms of loop
+  // work (6 ADC reads + the I2C transfer) on top of the interval, so the real
+  // period would be 5.8 ms, not 5. This keeps the sample rate at the rate.
+  static uint32_t lastPoll = 0;
+  uint32_t now = millis();
+  if (now - lastPoll < POLL_INTERVAL_MS) return;
+  lastPoll = now;
+
   uint16_t raw;
   if (!readPCF8575(PCF_ADDR, raw)) {
-    Serial.println("WARN: PCF8575 (0x24) not responding");
-    delay(POLL_INTERVAL_MS);
+    // Throttled: at 200 Hz an unresponsive expander would otherwise emit 200
+    // warning lines a second and saturate the link that carries the axes.
+    static uint32_t lastWarn = 0;
+    if (now - lastWarn >= 1000) {
+      lastWarn = now;
+      Serial.println("WARN: PCF8575 (0x24) not responding");
+    }
     return;
   }
 
-  char mask[NUM_SWITCHES + 1];
-  for (uint8_t i = 0; i < NUM_SWITCHES; i++) {
-    bool pressed = (raw >> pinToBitIndex(SWITCH_PINS[i])) & 1;
-    mask[i] = pressed ? '1' : '0';
+  // A change has to survive DEBOUNCE_STABLE_READS identical polls before it is
+  // believed. Anything shorter is bounce and never reaches the frame.
+  if (raw == candidateSwitches) {
+    if (switchMatchCount < DEBOUNCE_STABLE_READS) switchMatchCount++;
+  } else {
+    candidateSwitches = raw;
+    switchMatchCount = 1;
   }
-  mask[NUM_SWITCHES] = '\0';
+  if (switchMatchCount == DEBOUNCE_STABLE_READS) {
+    stableSwitches = candidateSwitches;
+  }
 
-  Serial.print(mask);
+  // One line, assembled then written in a single call. Serial.print() blocks
+  // once the TX buffer fills, which would stall sampling, so the frame is
+  // dropped instead if the buffer cannot take it whole — a skipped frame at
+  // 200 Hz is invisible, a stalled loop is not.
+  char line[64];
+  int len = 0;
+  for (uint8_t i = 0; i < NUM_SWITCHES; i++) {
+    bool pressed = (stableSwitches >> pinToBitIndex(SWITCH_PINS[i])) & 1;
+    line[len++] = pressed ? '1' : '0';
+  }
   for (uint8_t i = 0; i < NUM_JOY_AXES; i++) {
     joySmoothed[i] += EMA_ALPHA * (analogRead(JOY_PINS[i]) - joySmoothed[i]);
     int axisValue = map((int)joySmoothed[i], 0, ADC_MAX, 0, 1000);
-    Serial.print('|');
-    Serial.print(axisValue);
+    len += snprintf(line + len, sizeof(line) - len, "|%d", axisValue);
   }
-  Serial.println();
+  len += snprintf(line + len, sizeof(line) - len, "\r\n");
 
-  delay(POLL_INTERVAL_MS);
+  if (Serial.availableForWrite() >= len) {
+    Serial.write((const uint8_t *)line, len);
+  }
 }

@@ -77,7 +77,7 @@ const ROUTES = [
   ['#/', ['Indomitus Ground Station', 'Left monitor', 'Right monitor', 'Keyboard']],
   ['#/left', ['Telemetry', 'Command path', 'Control box', 'Rover log', 'Ground speed']],
   ['#/right', ['Camera wall', 'feeds', 'Focus', 'Grid']],
-  ['#/cam/cam1', ['Front Navigation', '/camera/front/image_raw']],
+  ['#/cam/cam1', ['Front Navigation', '/zed2i/rgb/image_rect_color']],
   ['#/calibrate', ['Stick calibration', 'Hold X at maximum', 'Centre deadzone', 'Panel buttons']],
   ['#/nope', []], // redirect resolves client-side; here it just must not throw
 ];

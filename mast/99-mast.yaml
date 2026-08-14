@@ -28,8 +28,14 @@
 # (ssh admin@fe80::8aa2:9eff:fec6:5546%<gs-iface>) if the IPv4 config is wrong.
 #
 # NOTE: the SSID below is the pre-competition one. ERC requires
-# "ERC_<TeamName>_(A/B)" on the 5 GHz Low Band, and the channel is assigned by
-# the judges at the RF Check - so expect to change access-points: here.
+# "ERC_<TeamName>_(A/B)" - team name is UCU Space Robotics, not Indomitus,
+# which is the rover - so expect to change access-points: here.
+#
+# No band or channel appears in this file and none should. netplan matches on
+# SSID alone, so the client follows the AP wherever it moves; the rover's AP is
+# on 5 GHz ch36 as of 2026-08-13 and this config needed no edit to follow it.
+# That is what makes the judges assigning a channel at the RF Check a rover-side
+# change only.
 network:
   version: 2
   renderer: networkd

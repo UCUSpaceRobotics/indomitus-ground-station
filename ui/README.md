@@ -175,3 +175,20 @@ drives it directly.
 | One camera "No signal"                 | Topic name in settings; `ros2 topic hz <topic>`                        |
 | Cameras missing with no obvious reason | Control box panel — the switch may be off. Press `S` to bypass         |
 | Video works, page is sluggish          | Use focus layout instead of grid, or lower quality/width in settings   |
+| Nothing at all arrives, but `ros2 node info` looks perfect | DDS is announcing the wrong interface — see below |
+
+### "Discovery works, no data arrives"
+
+If `ros2 topic list`, `ros2 node info` and `ros2 topic info -v` all look healthy —
+right types, right QoS, right publisher counts — but `ros2 topic hz` is silent on
+*every* topic, this is not a camera problem. The ground station laptop runs two
+WiFi adapters (rover link + internet), and Fast DDS advertises unicast locators
+on both. The rover picks one, and if it picks the internet-side address, every
+sample is dropped while discovery keeps working over multicast.
+
+Fix: regenerate the interface whitelist and restart the container.
+
+```bash
+./docker/gen-dds-profile.sh   # resolves this laptop's address on the rover link
+docker compose up -d
+```

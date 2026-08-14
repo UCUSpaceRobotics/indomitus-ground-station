@@ -37,7 +37,8 @@ def generate_launch_description():
             name='serial_joy_node',
             parameters=[{
                 'port': LaunchConfiguration('joy_board_port'),
-                'baudrate': 115200,
+                # Must match UART_BAUD in the joystick board's firmware.
+                'baudrate': 921600,
                 # Defaults assume a perfectly centred 0..1000 stick; the
                 # calibration wizard in the UI overwrites these at runtime and
                 # persists them to calibration_file.
@@ -77,6 +78,8 @@ def generate_launch_description():
                 'linear_y_scale': 0.5,
                 'angular_z_scale': 1.0,
                 'joy_timeout': 0.2,
+                # The sticks run at 200 Hz; the rover link does not need to.
+                'publish_rate': 50.0,
                 # Sticks drive the rover while switch 0 is 1; the arm gets them
                 # when it is 0. Both nodes read the same switch.
                 'mode_switch_index': 0,
@@ -107,6 +110,9 @@ def generate_launch_description():
                 'linear_scale': 1.0,
                 'angular_scale': 1.0,
                 'frame_id': 'base_link',
+                # Same cap as the drive node; MoveIt Servo's own
+                # incoming_command_timeout is 0.1 s, so 50 Hz has wide margin.
+                'publish_rate': 50.0,
                 'mode_switch_index': 0,
                 'mode_switch_value': 0,
             }],

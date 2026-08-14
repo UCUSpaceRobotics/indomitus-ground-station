@@ -26,7 +26,9 @@ class SerialJoyNode(Node):
 
         # Parameters
         self.declare_parameter('port', '/dev/ttyACM0')
-        self.declare_parameter('baudrate', 115200)
+        # Must match UART_BAUD in the joystick board's firmware. 115200 cannot
+        # carry 200 Hz: a 35-byte frame costs 3.0 ms on the wire there.
+        self.declare_parameter('baudrate', 921600)
         # Per-axis calibration, in raw firmware units (0..1000). Captured by the
         # calibration wizard in the UI, which writes them back over
         # /serial_joy_node/set_parameters.
@@ -90,8 +92,11 @@ class SerialJoyNode(Node):
         self.save_srv = self.create_service(
             Trigger, '~/save_calibration', self._on_save_calibration)
 
-        # Timer to poll serial data (50Hz, matching the firmware's send rate)
-        self.timer = self.create_timer(0.02, self.read_serial)
+        # Poll at the firmware's send rate (200 Hz). Polling slower than the
+        # board sends does not merely add latency: read_serial keeps only the
+        # newest frame in the buffer and drops the rest, so a 50 Hz timer
+        # against a 200 Hz board would discard 3 frames in 4.
+        self.timer = self.create_timer(0.005, self.read_serial)
 
     # ── parameters ───────────────────────────────────────────────────────────
 
