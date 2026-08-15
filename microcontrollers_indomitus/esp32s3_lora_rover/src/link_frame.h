@@ -42,7 +42,7 @@ struct LinkFrame {
 };
 
 // Velocities are percentages of the rover's configured maximum, -100..100.
-// A byte per axis is plenty: the joystick resolution that survives a 5 Hz link
+// A byte per axis is plenty: the joystick resolution that survives a 3 Hz link
 // is nowhere near 8 bits, and it keeps the frame at one air packet.
 struct TeleopPayload {
     int8_t vx;

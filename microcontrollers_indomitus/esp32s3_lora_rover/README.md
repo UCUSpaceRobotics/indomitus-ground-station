@@ -101,8 +101,8 @@ always one air packet, written in a single `write()`.
 shared source of truth. Change one, change the other, then re-run the check in
 §6 step 2.
 
-**Failsafe:** the rover zeroes its command output after 500 ms without a
-CRC-valid teleop frame — two to three missed polls at 5 Hz. It fails to
+**Failsafe:** the rover zeroes its command output after 1 s without a
+CRC-valid teleop frame — three missed polls at 3 Hz. It fails to
 *stopped*, never to last-known-good, and it boots into that state.
 
 ## 5. Build and console
@@ -183,7 +183,7 @@ work" reports are a swapped TX/RX pair or a browning-out supply.
    mast sends text. Either direction working proves the radios hear each other.
 
 5. **Framed ping at 1 m.** `python3 lora_bridge.py --ping 200`.
-   Target: ≥99 % answered, RTT p95 under 150 ms. High loss with the modules
+   Target: ≥99 % answered, RTT p95 under 260 ms. High loss with the modules
    sitting next to each other means collisions — check that nothing on the rover
    transmits except in reply.
 
@@ -196,6 +196,26 @@ work" reports are a swapped TX/RX pair or a browning-out supply.
    report `DOWN` within about a second. (b) Confirm the rover console prints
    `FAILSAFE` and zeroes the command; check it, do not assume it. (c) Walk out
    of range and back — the link must recover without restarting either side.
+
+## Measured — bench, 2026-08-15, both modules on a desk
+
+| | |
+|---|---|
+| Round trip | **240 ms** (min 240, p50 241, p95 243, max 245 over 60 polls) |
+| Loss | 0 % at 3 Hz; 60/60 and 20/20 across runs |
+| CRC failures | 0 |
+
+The round trip is the number that matters, and it is far higher than the
+10 bytes of payload suggest: at 4.8 kbps the payload is ~17 ms per direction, so
+the rest is the E32's own preamble, header and FEC, plus ~40 ms of UART at 9600
+and the module's fixed 5 ms RX-to-UART delay.
+
+**That is why the poll rate is 3 Hz and not the 5 Hz originally planned.** A
+200 ms period is shorter than the round trip, so the reply cannot arrive before
+the next poll goes out — the first bench run scored 0/50 answered while the
+rover was receiving and replying to 47 of them perfectly. Anything that raises
+the poll rate has to lower the round trip first: a faster air rate (at the cost
+of range) or a faster UART (worth ~30 ms of the 240).
 
 ## Troubleshooting
 

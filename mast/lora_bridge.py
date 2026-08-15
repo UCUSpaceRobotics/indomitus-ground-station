@@ -26,7 +26,7 @@ polled out:
     {"vx": 20, "vy": 0, "wz": -10, "estop": false}
 
 A command that stops being refreshed goes back to zero after --command-timeout;
-the rover independently zeroes its own output after 500 ms of silence.
+the rover independently zeroes its own output after 1 s of silence.
 
 Usage:
     lora_bridge.py                       # serve on tcp/4001
@@ -38,6 +38,7 @@ Usage:
 """
 
 import argparse
+import glob
 import json
 import math
 import socket
@@ -77,6 +78,9 @@ CONFIG_BAUD = 9600            # the module's command mode is always 9600 8N1
 
 MODE_NORMAL = 0
 MODE_SLEEP = 3
+# How long AUX must read high before a mode change is trusted. Measured
+# boundary is ~20 ms; see Gpio.set_mode.
+MODE_SETTLE_S = 0.030
 
 
 def percentile(values, pct):
@@ -109,11 +113,22 @@ class NullGpio:
         pass
 
 
+# The chip that owns the 40-pin header, by label. The device number is not
+# stable - it is 4 on a Pi 5 and 0 on earlier boards - and on a Pi 5 the other
+# four chips are internal brcmstb controllers that must never be driven.
+HEADER_CHIP_LABELS = (
+    "pinctrl-rp1",        # Pi 5
+    "pinctrl-bcm2711",    # Pi 4
+    "pinctrl-bcm2835",    # Pi 3 and earlier
+)
+
+
 class Gpio:
     """M0/M1 as outputs, AUX as input, via lgpio.
 
     lgpio and not RPi.GPIO: the Pi 5's RP1 is not supported by the RPi.GPIO on
-    PyPI. Ubuntu packages this as python3-lgpio.
+    PyPI. Ubuntu packages it as python3-lgpio, and it also arrives as a
+    dependency of rpi-lgpio, which is how the mast Pi already has it.
     """
 
     def __init__(self, m0, m1, aux, chip=None):
@@ -121,32 +136,57 @@ class Gpio:
 
         self._lgpio = lgpio
         self.m0, self.m1, self.aux = m0, m1, aux
-
-        candidates = [chip] if chip is not None else [4, 0]
-        last_error = None
-        for number in candidates:
-            try:
-                self._handle = lgpio.gpiochip_open(number)
-                self.chip = number
-                break
-            except Exception as exc:            # lgpio raises bare Exception subclasses
-                last_error = exc
-        else:
-            raise RuntimeError(
-                f"could not open any of gpiochip{candidates}: {last_error}. "
-                "Pass --gpiochip N; on a Pi 5 the 40-pin header is usually 4.")
+        self.chip, self._handle = self._open_chip(chip)
 
         lgpio.gpio_claim_output(self._handle, self.m0, 0)
         lgpio.gpio_claim_output(self._handle, self.m1, 0)
-        lgpio.gpio_claim_input(self._handle, self.aux)
+        # Pulled up, like the firmware does, so a disconnected or unpowered
+        # module reads "not busy" instead of floating. The E32 drives AUX
+        # push-pull, so the pull-up costs nothing when one is attached.
+        lgpio.gpio_claim_input(self._handle, self.aux, lgpio.SET_PULL_UP)
+
+    def _open_chip(self, chip):
+        """Find the header's gpiochip by label, or take the one we were given."""
+        lgpio = self._lgpio
+        if chip is not None:
+            return chip, lgpio.gpiochip_open(chip)
+
+        tried = []
+        for path in sorted(glob.glob("/dev/gpiochip*")):
+            suffix = path[len("/dev/gpiochip"):]
+            if not suffix.isdigit():
+                continue
+            number = int(suffix)
+            try:
+                handle = lgpio.gpiochip_open(number)
+            except Exception as exc:        # lgpio raises bare Exception subclasses
+                tried.append(f"{number}: {exc}")
+                continue
+            label = lgpio.gpio_get_chip_info(handle)[3]
+            if label in HEADER_CHIP_LABELS:
+                return number, handle
+            lgpio.gpiochip_close(handle)
+            tried.append(f"{number}: {label!r} is not a header controller")
+
+        raise RuntimeError(
+            "no 40-pin header gpiochip found (" + "; ".join(tried) + "). "
+            "Pass --gpiochip N to override.")
 
     def set_mode(self, mode):
-        """Datasheet 6.1: only switch while AUX is high, and let it settle."""
+        """Change mode and wait until the module will actually answer.
+
+        The datasheet only promises AUX high plus 2 ms, which is not enough.
+        Measured on the mast Pi: AUX drops within 5 ms of M0/M1 changing, but
+        C1C1C1 is ignored until roughly 20 ms have passed - 0/5 accepted at
+        5 ms, 4/5 at 10 ms, 5/5 from 20 ms. Worse, a plain "is AUX high?" check
+        run straight after the write samples the level from *before* the module
+        reacted and returns true while it is still switching. So require AUX to
+        read high continuously instead of merely once.
+        """
         settled = self.wait_aux()
         self._lgpio.gpio_write(self._handle, self.m0, mode & 0x01)
         self._lgpio.gpio_write(self._handle, self.m1, (mode >> 1) & 0x01)
-        time.sleep(0.005)
-        return self.wait_aux() and settled
+        return self.wait_aux_stable() and settled
 
     def wait_aux(self, timeout=1.0):
         """AUX low means busy: self-check, unsent TX, or RX draining to the UART."""
@@ -157,6 +197,21 @@ class Gpio:
             time.sleep(0.001)
         time.sleep(0.003)
         return True
+
+    def wait_aux_stable(self, timeout=1.0, stable=MODE_SETTLE_S):
+        """Wait until AUX has read high continuously for `stable` seconds."""
+        deadline = time.monotonic() + timeout
+        high_since = None
+        while time.monotonic() < deadline:
+            if self._lgpio.gpio_read(self._handle, self.aux):
+                if high_since is None:
+                    high_since = time.monotonic()
+                elif time.monotonic() - high_since >= stable:
+                    return True
+            else:
+                high_since = None
+            time.sleep(0.001)
+        return False
 
     def close(self):
         self._lgpio.gpiochip_close(self._handle)
@@ -253,6 +308,7 @@ class Master(threading.Thread):
 
         self._command = lora_frame.Teleop()
         self._command_ts = 0.0
+        self._stop = threading.Event()
         self._lock = threading.Lock()
         # A client can connect before the first poll finishes, so this has to be
         # a valid snapshot rather than a placeholder - `link` in particular is
@@ -280,11 +336,16 @@ class Master(threading.Thread):
 
     # -- poll loop ---------------------------------------------------------
 
+    def stop(self):
+        """Ask the poll loop to finish its current cycle and exit."""
+        self._stop.set()
+
     def run(self):
-        while self.stop_after is None or self.polls < self.stop_after:
+        while not self._stop.is_set() and (
+                self.stop_after is None or self.polls < self.stop_after):
             started = time.monotonic()
             self._poll_once()
-            time.sleep(max(0.0, self.period - (time.monotonic() - started)))
+            self._stop.wait(max(0.0, self.period - (time.monotonic() - started)))
 
     def _poll_once(self):
         command = self._current_command()
@@ -457,10 +518,19 @@ def run_selftest():
 
 def run_config(e32, action):
     if action == "read":
-        print(f"config: {hexdump(e32.config_read())}")
+        readback = e32.config_read()
+        if not readback:
+            print("no reply - check the module's wiring, supply and M0/M1 pins",
+                  file=sys.stderr)
+            return
+        print(f"config: {hexdump(readback)}")
         return
+
     wrote, readback = e32.config_write(CFG_OPTION[action])
     print(f"wrote:  {hexdump(wrote)}")
+    if not readback:
+        print("no reply to the read-back - the write is unconfirmed", file=sys.stderr)
+        return
     print(f"config: {hexdump(readback)}")
     if readback != wrote:
         print("MISMATCH - the module did not take the configuration", file=sys.stderr)
@@ -512,14 +582,16 @@ def main():
     ap.add_argument("--m1", type=int, default=24, help="BCM pin (physical 18)")
     ap.add_argument("--aux", type=int, default=17, help="BCM pin (physical 11)")
     ap.add_argument("--gpiochip", type=int, default=None,
-                    help="default: try 4 then 0")
+                    help="default: find the chip labelled pinctrl-rp1 / pinctrl-bcm*")
     ap.add_argument("--no-gpio", action="store_true",
                     help="M0/M1 strapped low in hardware; disables config mode")
     ap.add_argument("--bind", default="10.44.0.1",
                     help="bind address; the mast link only, not 0.0.0.0")
     ap.add_argument("--tcp-port", type=int, default=4001)
-    ap.add_argument("--rate", type=float, default=5.0, help="polls per second")
-    ap.add_argument("--reply-timeout", type=float, default=0.15)
+    ap.add_argument("--rate", type=float, default=3.0,
+                    help="polls per second; the measured round trip is ~240 ms, "
+                         "so a period below that can never be answered in time")
+    ap.add_argument("--reply-timeout", type=float, default=0.30)
     ap.add_argument("--command-timeout", type=float, default=0.5,
                     help="zero the command if no client refreshes it")
     ap.add_argument("--ping", type=int, metavar="N",
@@ -538,6 +610,7 @@ def main():
 
     gpio = NullGpio() if args.no_gpio else Gpio(args.m0, args.m1, args.aux, args.gpiochip)
     e32 = E32(args.port, args.baud, gpio)
+    master = None
     try:
         if args.config:
             run_config(e32, args.config)
@@ -561,6 +634,12 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        # Stop polling before closing the port. Otherwise the daemon thread
+        # keeps writing to a closed serial handle and dumps a traceback that
+        # interleaves with - and hides - whatever actually went wrong.
+        if master is not None:
+            master.stop()
+            master.join(timeout=2.0)
         e32.close()
 
 

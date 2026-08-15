@@ -191,10 +191,14 @@ plus a `reasons` list, so the consumer can read either stream with one parser.
 hysteresis, whether the command path should be Wi-Fi or LoRa. It publishes that
 on the latched `/link/active_path`. It does not move any traffic itself.
 
-> **Port conflict:** `ser2net` is also installed and enabled on the Pi, bound to
-> `10.44.0.1:4001` — it was the original raw-serial export that `lora_bridge.py`
-> replaces. Both want the same port and only one can hold it. Disable ser2net
-> (`sudo systemctl disable --now ser2net`) before relying on `lora_bridge.py`.
+> **Port conflict:** `ser2net` was installed and enabled on the Pi, bound to
+> `10.44.0.1:4001` — the original raw-serial export that `lora_bridge.py`
+> replaces. Both want the same port and only one can hold it, and the symptom
+> is `OSError: [Errno 98] Address already in use` at startup. It has now been
+> disabled (`sudo systemctl disable --now ser2net`, 2026-08-15); re-enable with
+> `sudo systemctl enable --now ser2net` if the raw export is ever wanted back.
+> It only opened `/dev/ttyAMA0` on connection, which is why it never blocked
+> `--ping`/`--config` — only the listening socket collided.
 
 ## ROS 2 and DDS
 
@@ -353,7 +357,7 @@ python3 lora_bridge.py --config write    # write them at 30 dBm, then read back
 python3 lora_bridge.py --config low      # same, but at 21 dBm
 python3 lora_bridge.py --chat            # raw transparent text, no framing
 python3 lora_bridge.py --ping 200        # measure loss and RTT, print a summary
-python3 lora_bridge.py                   # normal: poll at 5 Hz, serve tcp/4001
+python3 lora_bridge.py                   # normal: poll at 3 Hz, serve tcp/4001
 ```
 
 The full bring-up procedure, the wire format and the module's register layout
@@ -368,7 +372,7 @@ command object per line on the same socket:
 ```
 
 A command that stops being refreshed reverts to zero after `--command-timeout`
-(0.5 s); the rover independently zeroes its own output after 500 ms of silence.
+(0.5 s); the rover independently zeroes its own output after 1 s of silence.
 
 ## Diagnosing a dead link
 
@@ -431,11 +435,13 @@ i.e. the return route is missing.
   phones and laptops — is locked out. One radio can only be on one band at a
   time; a second band needs a second adapter. See
   [`../HANDOVER.md`](../HANDOVER.md).
-- `ser2net` and `lora_bridge.py` both want tcp/4001.
 - `lora_gateway_node` — the ROS node that would subscribe to
   `/link/active_path` and feed commands into tcp/4001 — does not exist yet, so
   nothing currently drives the LoRa path automatically.
-- `lora_bridge.py` has no systemd unit.
+- `lora_bridge.py` has no systemd unit, so it is currently started by hand
+  (`nohup ~/e32-venv/bin/python ~/lora_bridge.py &`) and will not survive a
+  reboot. It runs from `~/e32-venv`, which already carries pyserial and
+  lgpio — the Pi has no internet, so apt cannot install anything.
 - **Credentials are defaults** (the Wi-Fi PSK is in `99-mast.yaml`; the rover's
   login is trivial). Change both before competition.
 - `wlan0` on the Pi logs `brcmf_set_channel … fail` every ~11 s. It is the

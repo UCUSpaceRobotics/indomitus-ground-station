@@ -45,12 +45,17 @@ static const uint8_t E32_MODE_NORMAL = 0;
 static const uint8_t E32_MODE_SLEEP = 3;
 
 // --- timing ---------------------------------------------------------------
-// Two to three missed polls at the mast's 5 Hz. Long enough to ride out a
-// single dropped frame, short enough that a dead link stops the rover before
-// it travels anywhere.
-static const uint32_t FAILSAFE_TIMEOUT_MS = 500;
+// Three missed polls at the mast's 3 Hz. Long enough to ride out a single
+// dropped frame, short enough that a dead link stops the rover before it
+// travels anywhere. The rate is measured, not chosen: the round trip is
+// ~240 ms, so the mast cannot poll faster than about 3 Hz and have the reply
+// back before the next poll. Revisit both once the range walk is done.
+static const uint32_t FAILSAFE_TIMEOUT_MS = 1000;
 static const uint32_t STATUS_PRINT_MS = 1000;
 static const uint32_t AUX_TIMEOUT_MS = 1000;
+// How long AUX must read high before a mode change is trusted. Measured
+// boundary is ~20 ms; see setMode().
+static const uint32_t MODE_SETTLE_MS = 30;
 
 // --- state ----------------------------------------------------------------
 static LinkParser parser;
@@ -85,13 +90,40 @@ static bool waitAux(uint32_t timeout_ms)
     return true;
 }
 
+// Wait until AUX has read high continuously for `stable_ms`.
+static bool waitAuxStable(uint32_t timeout_ms, uint32_t stable_ms)
+{
+    const uint32_t started = millis();
+    uint32_t high_since = 0;
+    bool high = false;
+    while (millis() - started < timeout_ms) {
+        if (digitalRead(E32_AUX_PIN) == HIGH) {
+            if (!high) {
+                high = true;
+                high_since = millis();
+            } else if (millis() - high_since >= stable_ms) {
+                return true;
+            }
+        } else {
+            high = false;
+        }
+        delay(1);
+    }
+    return false;
+}
+
+// The datasheet only promises AUX high plus 2 ms, which is not enough.
+// Measured on the mast Pi: AUX drops within 5 ms of M0/M1 changing, but the
+// module ignores C1C1C1 until roughly 20 ms have passed - 0/5 accepted at 5 ms,
+// 4/5 at 10 ms, 5/5 from 20 ms. A plain "is AUX high?" check run straight after
+// the write can also sample the level from before the module reacted, so
+// require AUX to read high continuously rather than merely once.
 static bool setMode(uint8_t mode)
 {
     const bool settled = waitAux(AUX_TIMEOUT_MS);
     digitalWrite(E32_M0_PIN, mode & 0x01);
     digitalWrite(E32_M1_PIN, (mode >> 1) & 0x01);
-    delay(5);
-    return waitAux(AUX_TIMEOUT_MS) && settled;
+    return waitAuxStable(AUX_TIMEOUT_MS, MODE_SETTLE_MS) && settled;
 }
 
 // Runs one sleep-mode command transaction and returns to normal mode. Reply
@@ -222,7 +254,7 @@ static void applyFailsafe()
     }
     command.vx = command.vy = command.wz = 0;
     failsafe = true;
-    Serial.println("FAILSAFE: no valid teleop frame for 500 ms - command zeroed");
+    Serial.println("FAILSAFE: no valid teleop frame for 1 s - command zeroed");
 }
 
 // --- console --------------------------------------------------------------
