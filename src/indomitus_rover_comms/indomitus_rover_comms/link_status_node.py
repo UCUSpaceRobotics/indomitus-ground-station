@@ -56,6 +56,14 @@ class LinkStatusNode(Node):
         # 15 good samples before trusting Wi-Fi again.
         self.declare_parameter("restore_after", 15)
         self.declare_parameter("publish_rate_hz", 2.0)
+        # AUTO | WIFI | LORA. A manual override for field testing, so the LoRa
+        # path can be exercised without actually breaking Wi-Fi:
+        #     ros2 param set /link_status_node force_path LORA
+        #     ros2 param set /link_status_node force_path AUTO
+        # A parameter rather than publishing /link/active_path by hand, because
+        # this node publishes that topic too and the two would fight - the
+        # subscriber would see them alternate at whatever rate each was sent.
+        self.declare_parameter("force_path", "AUTO")
 
         self.host = self.get_parameter("monitor_host").value
         self.port = int(self.get_parameter("monitor_port").value)
@@ -85,6 +93,7 @@ class LinkStatusNode(Node):
 
         self.bad_run = 0
         self.good_run = 0
+        self.forced = None
         self.active_path = PATH_WIFI
         self._publish_path()
 
@@ -155,7 +164,27 @@ class LinkStatusNode(Node):
             self.bad_run = 0        # a switch nor counts toward restoring.
             self.good_run = 0
 
-        if self.active_path == PATH_WIFI and self.bad_run >= self.fail_after:
+        forced = str(self.get_parameter("force_path").value).strip().upper()
+        if forced not in (PATH_WIFI, PATH_LORA):
+            if self.forced is not None:
+                self.get_logger().warn(
+                    f"force_path cleared - back to automatic (currently "
+                    f"{self.active_path})")
+                self.forced = None
+            forced = None
+
+        if forced is not None:
+            # The run counters keep advancing underneath, so clearing the
+            # override resumes from the link's real state rather than from
+            # whatever it was when the override went on.
+            if forced != self.forced:
+                self.get_logger().warn(
+                    f"force_path={forced} - overriding the automatic decision")
+                self.forced = forced
+            if self.active_path != forced:
+                self.active_path = forced
+                self._publish_path()
+        elif self.active_path == PATH_WIFI and self.bad_run >= self.fail_after:
             self.get_logger().error(
                 f"primary link DOWN for {self.bad_run} samples ({', '.join(reasons)}) "
                 f"- switching command path to LoRa")

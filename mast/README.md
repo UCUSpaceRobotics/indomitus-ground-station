@@ -189,7 +189,18 @@ plus a `reasons` list, so the consumer can read either stream with one parser.
 
 `link_status_node` on the GS PC consumes 4002 and decides, with asymmetric
 hysteresis, whether the command path should be Wi-Fi or LoRa. It publishes that
-on the latched `/link/active_path`. It does not move any traffic itself.
+on the latched `/link/active_path`; `lora_gateway_node` acts on it. Neither the
+decision nor the relay can be forced by hand-publishing that topic - use
+`ros2 param set /link_status_node force_path LORA|WIFI|AUTO`, which exists for
+exactly that and does not fight the node's own publisher.
+
+`watch_links.py` shows both links on one line and is what to run during a range
+test; see [FIELD-TEST.md](FIELD-TEST.md).
+
+```
+python3 mast/watch_links.py --csv run1.csv
+14:40:54  WIFI OK  sig -35 dBm  loss 0%  rtt 15 ms  300 Mb | LORA OK  loss 0%  rtt 241 ms  rover ok
+```
 
 > **Port conflict:** `ser2net` was installed and enabled on the Pi, bound to
 > `10.44.0.1:4001` — the original raw-serial export that `lora_bridge.py`
@@ -343,9 +354,12 @@ service must not depend on a user's home directory surviving.
   `WorkingDirectory=/var/lib/lora-bridge` to fix it. Running the script by hand
   hides this entirely, because a shell's cwd is writable.
 - **`network.target` does not mean an address is assigned.** Both services bind
-  `10.44.0.1` specifically, so the first bind after a cold boot can lose the
-  race against netplan. Both use `Restart=always` with `RestartSec=5`, which
-  covers it within seconds.
+  `10.44.0.1` specifically, so the first bind after a cold boot loses the race
+  against netplan. This is observed, not theoretical: after a reboot both report
+  `NRestarts=1` and the journal carries one
+  `OSError: [Errno 99] Cannot assign requested address`. `Restart=always` with
+  `RestartSec=5` recovers it within seconds, so a fresh boot showing
+  `NRestarts=1` is expected and not a fault.
 
 `lora-bridge.service` runs as `admin`, not root: `/dev/ttyAMA0` and
 `/dev/gpiochip4` are both `root:dialout` and `admin` is in `dialout`.
@@ -390,6 +404,8 @@ Verify: `ls -l /dev/ttyAMA0` exists, and `sudo lsof /dev/ttyAMA0` prints nothing
 
 ```
 python3 lora_bridge.py --selftest        # frame codec, no hardware needed
+python3 lora_bridge.py --rate-sweep      # fastest poll rate the link sustains
+python3 lora_bridge.py --throughput 30   # iperf-style one-way saturation test
 python3 lora_bridge.py --config read     # print the module's six config bytes
 python3 lora_bridge.py --config write    # write them at 30 dBm, then read back
 python3 lora_bridge.py --config low      # same, but at 21 dBm
@@ -473,9 +489,8 @@ i.e. the return route is missing.
   phones and laptops — is locked out. One radio can only be on one band at a
   time; a second band needs a second adapter. See
   [`../HANDOVER.md`](../HANDOVER.md).
-- **Neither service has been tested across an actual reboot.** Both are
-  `enabled` and both survive `systemctl kill -s KILL`, but the cold-boot bind
-  race against netplan has only been reasoned about, not observed.
+- **No range test has been done.** Every threshold in both monitors is a bench
+  guess; [FIELD-TEST.md](FIELD-TEST.md) is the procedure that replaces them.
 - **Credentials are defaults** (the Wi-Fi PSK is in `99-mast.yaml`; the rover's
   login is trivial). Change both before competition.
 - `wlan0` on the Pi logs `brcmf_set_channel … fail` every ~11 s. It is the

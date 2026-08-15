@@ -31,6 +31,8 @@ the rover independently zeroes its own output after 1 s of silence.
 Usage:
     lora_bridge.py                       # serve on tcp/4001
     lora_bridge.py --ping 200            # bring-up: measure loss and RTT
+    lora_bridge.py --rate-sweep          # find the usable poll rate
+    lora_bridge.py --throughput 30       # iperf-style saturation test
     lora_bridge.py --chat                # bring-up: raw transparent text
     lora_bridge.py --config read         # print the module's registers
     lora_bridge.py --config write        # write them (30 dBm), then read back
@@ -308,7 +310,11 @@ class Master(threading.Thread):
 
         self._command = lora_frame.Teleop()
         self._command_ts = 0.0
-        self._stop = threading.Event()
+        # Not _stop: threading.Thread defines _stop() as a method on Python 3.12
+        # and calls it internally when the thread exits. Shadowing it with an
+        # Event makes every shutdown die with "'Event' object is not callable",
+        # in a traceback that names none of our own code.
+        self._stopping = threading.Event()
         self._lock = threading.Lock()
         # A client can connect before the first poll finishes, so this has to be
         # a valid snapshot rather than a placeholder - `link` in particular is
@@ -338,16 +344,17 @@ class Master(threading.Thread):
 
     def stop(self):
         """Ask the poll loop to finish its current cycle and exit."""
-        self._stop.set()
+        self._stopping.set()
 
     def run(self):
-        while not self._stop.is_set() and (
+        while not self._stopping.is_set() and (
                 self.stop_after is None or self.polls < self.stop_after):
             started = time.monotonic()
-            self._poll_once()
-            self._stop.wait(max(0.0, self.period - (time.monotonic() - started)))
+            self.poll_once()
+            self._stopping.wait(max(0.0, self.period - (time.monotonic() - started)))
 
-    def _poll_once(self):
+    def poll_once(self):
+        """One poll and its answer. Returns the rover's Status, or None."""
         command = self._current_command()
         self.seq = (self.seq + 1) & 0xFF
         frame = lora_frame.encode(lora_frame.TYPE_TELEOP, self.seq,
@@ -357,10 +364,11 @@ class Master(threading.Thread):
         self.polls += 1
         if not self.e32.write_frame(frame):
             self._record(None, None, "module busy, frame not sent")
-            return
+            return None
 
         status, rtt = self._await_status(self.seq, sent_at)
         self._record(status, rtt, None)
+        return status
 
     def _await_status(self, want_seq, sent_at):
         """Read until the rover's answer to this exact poll arrives, or time out."""
@@ -571,6 +579,124 @@ def run_ping(master, count):
     print(f"frames failing CRC: {master.parser.bad}")
 
 
+def run_rate_sweep(e32, rates, polls, command_timeout):
+    """Find the fastest poll rate the link actually sustains.
+
+    The reply has to be back before the next poll goes out, so the usable rate
+    is bounded by the round trip and nothing else. Sweeping is how you find that
+    bound rather than guessing it: this project started at 5 Hz on paper and
+    scored 0% delivered, because 200 ms is shorter than the 240 ms round trip.
+
+    Read the table as a property of the pair, not of the radio alone. The reply
+    window below is 90% of the period, so a rate fails as soon as
+    0.9/rate < round-trip, which is slightly before 1/rate < round-trip. With a
+    240 ms round trip that puts the cliff just under 3.75 Hz - which is why 3 Hz
+    passes and 4 Hz does not, even though a 250 ms period is nominally longer
+    than the round trip.
+    """
+    print(f"{'rate':>7} {'period':>8} {'sent':>6} {'answered':>9} "
+          f"{'loss':>7} {'p50':>8} {'p95':>8}")
+    for rate in rates:
+        period = 1.0 / rate
+        # The reply window must stay inside the period, or every poll lands late
+        # and the loop measures its own overrun instead of the link.
+        master = Master(e32, rate, min(0.9 * period, 0.5), command_timeout)
+        master.stop_after = polls
+        master.start()
+        master.join()
+
+        loss = 100.0 * (1.0 - master.replies / master.polls) if master.polls else 100.0
+        p50 = percentile(master.all_rtts, 50)
+        p95 = percentile(master.all_rtts, 95)
+        print(f"{rate:>6.1f}H {period * 1000:>7.0f}ms {master.polls:>6} "
+              f"{master.replies:>9} {loss:>6.1f}% "
+              f"{(f'{p50:.0f} ms' if p50 else '-'):>8} "
+              f"{(f'{p95:.0f} ms' if p95 else '-'):>8}")
+
+
+def run_throughput(e32, duration, burst, reply_timeout, command_timeout):
+    """iperf-style saturation test: flood one way and count what arrived.
+
+    --ping measures a polled round trip. This measures how much the radio will
+    actually carry. Frames go out back to back and write_frame blocks on AUX, so
+    the module paces us to whatever it will accept over UART; the rover's own
+    rx_ok counter is the ground truth for what then made it over the air. The
+    gap between the two is the module's 512-byte buffer overflowing, which
+    nothing on the UART side can see.
+
+    The flood uses STATUS frames rather than TELEOP on purpose. The rover counts
+    every CRC-valid frame in rx_ok but only answers TELEOP ones, so this fills
+    the air in one direction only. Flooding with TELEOP would have the rover
+    transmitting back into our transmission - exactly the collisions the
+    master/slave design exists to prevent - and would measure contention rather
+    than capacity.
+
+    rx_ok is one byte, so a burst plus its closing poll has to stay under 256
+    for the difference to be unambiguous. Longer runs are repeated bursts.
+    """
+    if burst > 254:
+        raise SystemExit("--burst must be 254 or less: the rover reports rx_ok "
+                         "as a single byte and the delta would wrap")
+
+    master = Master(e32, 1.0, reply_timeout, command_timeout)
+    flood = lora_frame.pack_status(lora_frame.Status(0, 0, 0, 0))
+
+    sent_total = delivered_total = rounds = 0
+    flood_seconds = 0.0
+    deadline = time.monotonic() + duration
+    print(f"flooding for {duration:.0f}s in bursts of {burst} frames "
+          f"({lora_frame.FRAME_LEN} bytes each)")
+
+    while time.monotonic() < deadline:
+        before = master.poll_once()
+        if before is None:
+            print("  no answer to the baseline poll - is the rover powered?")
+            break
+
+        seq = master.seq
+        started = time.monotonic()
+        sent = 0
+        for _ in range(burst):
+            seq = (seq + 1) & 0xFF
+            if not e32.write_frame(
+                    lora_frame.encode(lora_frame.TYPE_STATUS, seq, flood)):
+                break
+            sent += 1
+        elapsed = time.monotonic() - started
+
+        # Let the air and both UARTs drain before asking what arrived.
+        time.sleep(2.0)
+        master.seq = seq
+        after = master.poll_once()
+        if after is None:
+            print("  no answer after the burst - link lost?")
+            break
+
+        # The closing poll's own frame is counted by the rover too.
+        delivered = (after.rx_ok - before.rx_ok - 1) & 0xFF
+        rounds += 1
+        sent_total += sent
+        delivered_total += delivered
+        flood_seconds += elapsed
+        pct = (100.0 * delivered / sent) if sent else 0.0
+        print(f"  burst {rounds}: sent {sent} in {elapsed:.2f}s, "
+              f"delivered {delivered} ({pct:.0f}%)")
+
+    if not flood_seconds:
+        return
+    width = lora_frame.FRAME_LEN
+    print()
+    print(f"into the module : {sent_total} frames / {flood_seconds:.2f}s = "
+          f"{sent_total / flood_seconds:5.1f} frame/s, "
+          f"{sent_total * width / flood_seconds:5.0f} B/s")
+    print(f"over the air    : {delivered_total} frames / {flood_seconds:.2f}s = "
+          f"{delivered_total / flood_seconds:5.1f} frame/s, "
+          f"{delivered_total * width / flood_seconds:5.0f} B/s")
+    if sent_total:
+        drop = 100.0 * (1.0 - delivered_total / sent_total)
+        print(f"buffer overflow : {drop:.0f}% - accepted over UART, never transmitted")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -596,6 +722,16 @@ def main():
                     help="zero the command if no client refreshes it")
     ap.add_argument("--ping", type=int, metavar="N",
                     help="send N polls, print loss and RTT, exit")
+    ap.add_argument("--rate-sweep", nargs="?", const="1,2,3,4,5,6", metavar="HZ",
+                    help="sweep poll rates (comma-separated, default 1,2,3,4,5,6) "
+                         "and report loss at each; finds the usable command rate")
+    ap.add_argument("--sweep-polls", type=int, default=30,
+                    help="polls per rate in --rate-sweep")
+    ap.add_argument("--throughput", type=float, nargs="?", const=30.0, metavar="SEC",
+                    help="iperf-style: flood one way for SEC seconds (default 30) "
+                         "and report what the rover actually received")
+    ap.add_argument("--burst", type=int, default=200,
+                    help="frames per burst in --throughput; 254 max (rx_ok is a byte)")
     ap.add_argument("--chat", action="store_true", help="raw transparent text mode")
     ap.add_argument("--config", choices=["read", "write", "low"],
                     help="read the module's registers, or write them at 30 dBm "
@@ -617,6 +753,15 @@ def main():
             return
         if args.chat:
             run_chat(e32)
+            return
+
+        if args.rate_sweep:
+            rates = [float(r) for r in args.rate_sweep.split(",") if r.strip()]
+            run_rate_sweep(e32, rates, args.sweep_polls, args.command_timeout)
+            return
+        if args.throughput:
+            run_throughput(e32, args.throughput, args.burst,
+                           args.reply_timeout, args.command_timeout)
             return
 
         master = Master(e32, args.rate, args.reply_timeout, args.command_timeout)
