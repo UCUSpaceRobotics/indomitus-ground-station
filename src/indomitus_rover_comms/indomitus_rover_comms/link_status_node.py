@@ -14,11 +14,12 @@ This node does two jobs and deliberately not a third:
      fallback should carry rover commands, and publish that on
      /link/active_path.
 
-It does NOT move any rover traffic itself. `lora_gateway_node` - not written yet
-- subscribes to /link/active_path and starts/stops relaying commands into
-`lora_bridge.py`'s port on 4001. Keeping the decision separate from the
-transport means the failover logic can be tested by publishing fake metrics,
-with no radio involved.
+It does NOT move any rover traffic itself. `lora_gateway_node` subscribes to
+/link/active_path and starts/stops relaying commands into `lora_bridge.py`'s
+port on 4001. Keeping the decision separate from the transport means the
+failover logic can be tested by publishing fake metrics, with no radio
+involved - and equally, the relay can be tested by publishing a fake
+/link/active_path with no failure involved.
 
 Hysteresis is asymmetric on purpose. Failing over is cheap and failing over late
 is dangerous - the operator is flying blind while the link is dead - so it trips

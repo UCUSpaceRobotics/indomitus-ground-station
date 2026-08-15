@@ -435,9 +435,6 @@ i.e. the return route is missing.
   phones and laptops — is locked out. One radio can only be on one band at a
   time; a second band needs a second adapter. See
   [`../HANDOVER.md`](../HANDOVER.md).
-- `lora_gateway_node` — the ROS node that would subscribe to
-  `/link/active_path` and feed commands into tcp/4001 — does not exist yet, so
-  nothing currently drives the LoRa path automatically.
 - `lora_bridge.py` has no systemd unit, so it is currently started by hand
   (`nohup ~/e32-venv/bin/python ~/lora_bridge.py &`) and will not survive a
   reboot. It runs from `~/e32-venv`, which already carries pyserial and
