@@ -287,16 +287,40 @@ inside its discovery payload and break ROS in a way that is painful to debug.
 ## Deploying
 
 Both scripts are stdlib + pyserial: nothing to build, nothing to break on a
-kernel upgrade. Copy them to the Pi and run them.
+kernel upgrade. Both run as systemd services, and both unit files live in this
+directory so the mast can be rebuilt from the repository rather than from
+whatever happens to be on the SD card.
 
 ```
-scp mast/link_monitor.py mast/lora_bridge.py mast/lora_frame.py admin@10.44.0.1:~/
+scp mast/link_monitor.py mast/lora_bridge.py mast/lora_frame.py \
+    mast/link-monitor.service mast/lora-bridge.service admin@10.44.0.1:/tmp/
+
+ssh admin@10.44.0.1
+sudo install -m 755 /tmp/link_monitor.py /tmp/lora_bridge.py /usr/local/sbin/
+sudo install -m 644 /tmp/lora_frame.py /usr/local/sbin/
+sudo install -m 644 /tmp/*.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now link-monitor lora-bridge
 ```
 
-`link_monitor.py` needs nothing installed. `lora_bridge.py` needs:
+`lora_frame.py` must sit next to `lora_bridge.py`: Python puts the script's own
+directory first on `sys.path`, which is the only reason `import lora_frame`
+resolves from `/usr/local/sbin`.
+
+### Dependencies
+
+`link_monitor.py` needs nothing installed. `lora_bridge.py` needs
+`python3-serial` (already present) and `python3-lgpio`.
+
+**The Pi has no default route, so `apt install` cannot fetch anything.** The
+lgpio packages were downloaded on the GS PC and installed with dpkg:
 
 ```
-sudo apt install python3-serial python3-lgpio
+# on the GS PC, which has internet
+base=http://ports.ubuntu.com/ubuntu-ports/pool/universe/l/lg-gpio
+curl -O $base/liblgpio1_0.2.0.0-0ubuntu3_arm64.deb
+curl -O $base/python3-lgpio_0.2.0.0-0ubuntu3_arm64.deb
+scp *.deb admin@10.44.0.1:/tmp/ && ssh admin@10.44.0.1 'sudo dpkg -i /tmp/*lgpio*.deb'
 ```
 
 **lgpio, not RPi.GPIO** — the version of `RPi.GPIO` on PyPI does not support the
@@ -305,12 +329,26 @@ uses the `rpi-lgpio` shim instead because the library it depends on insists on
 the `RPi.GPIO` import path; `lora_bridge.py` talks to `lgpio` directly and needs
 no shim.)
 
-`link_monitor.py` runs from `link-monitor.service`. `lora_bridge.py` has no unit
-yet and is started by hand over SSH.
+`~/e32-venv` on the Pi carries its own copy of both, but that is for the
+`e32-lora-chat` bench script only. **Do not point the service at it** — a system
+service must not depend on a user's home directory surviving.
 
-```
-python3 lora_bridge.py &
-```
+### Two systemd gotchas worth knowing
+
+- **`lgpio` writes to the current working directory.** It opens a notification
+  FIFO called `.lgd-nfy<n>` the moment it is imported. systemd starts services
+  in `/`, which the service user cannot write, and the failure surfaces far from
+  its cause: `FileNotFoundError: [Errno 2] No such file or directory:
+  '.lgd-nfy-3'`. `lora-bridge.service` sets `StateDirectory=lora-bridge` and
+  `WorkingDirectory=/var/lib/lora-bridge` to fix it. Running the script by hand
+  hides this entirely, because a shell's cwd is writable.
+- **`network.target` does not mean an address is assigned.** Both services bind
+  `10.44.0.1` specifically, so the first bind after a cold boot can lose the
+  race against netplan. Both use `Restart=always` with `RestartSec=5`, which
+  covers it within seconds.
+
+`lora-bridge.service` runs as `admin`, not root: `/dev/ttyAMA0` and
+`/dev/gpiochip4` are both `root:dialout` and `admin` is in `dialout`.
 
 ## LoRa wiring — Pi 5 GPIO ↔ E32-433T30D
 
@@ -435,10 +473,9 @@ i.e. the return route is missing.
   phones and laptops — is locked out. One radio can only be on one band at a
   time; a second band needs a second adapter. See
   [`../HANDOVER.md`](../HANDOVER.md).
-- `lora_bridge.py` has no systemd unit, so it is currently started by hand
-  (`nohup ~/e32-venv/bin/python ~/lora_bridge.py &`) and will not survive a
-  reboot. It runs from `~/e32-venv`, which already carries pyserial and
-  lgpio — the Pi has no internet, so apt cannot install anything.
+- **Neither service has been tested across an actual reboot.** Both are
+  `enabled` and both survive `systemctl kill -s KILL`, but the cold-boot bind
+  race against netplan has only been reasoned about, not observed.
 - **Credentials are defaults** (the Wi-Fi PSK is in `99-mast.yaml`; the rover's
   login is trivial). Change both before competition.
 - `wlan0` on the Pi logs `brcmf_set_channel … fail` every ~11 s. It is the
