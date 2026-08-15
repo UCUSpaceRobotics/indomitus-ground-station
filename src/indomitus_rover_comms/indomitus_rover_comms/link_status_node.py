@@ -2,9 +2,10 @@
 """Consume the mast Pi's link metrics and decide which command path is live.
 
 The mast Pi runs no ROS (see mast/README.md). It exports two raw TCP services -
-`link_monitor.py` on 4002 (JSON link metrics) and ser2net on 4001 (the E32's
-UART) - and everything needing a ROS graph runs here, in the Humble container on
-the ground-station PC, where it can be debugged on a desk instead of up a mast.
+`link_monitor.py` on 4002 (JSON Wi-Fi metrics) and `lora_bridge.py` on 4001
+(JSON LoRa metrics, and command injection into the radio) - and everything
+needing a ROS graph runs here, in the Humble container on the ground-station PC,
+where it can be debugged on a desk instead of up a mast.
 
 This node does two jobs and deliberately not a third:
 
@@ -13,9 +14,10 @@ This node does two jobs and deliberately not a third:
      fallback should carry rover commands, and publish that on
      /link/active_path.
 
-It does NOT move any rover traffic itself. `lora_gateway_node` subscribes to
-/link/active_path and starts/stops relaying. Keeping the decision separate from
-the transport means the failover logic can be tested by publishing fake metrics,
+It does NOT move any rover traffic itself. `lora_gateway_node` - not written yet
+- subscribes to /link/active_path and starts/stops relaying commands into
+`lora_bridge.py`'s port on 4001. Keeping the decision separate from the
+transport means the failover logic can be tested by publishing fake metrics,
 with no radio involved.
 
 Hysteresis is asymmetric on purpose. Failing over is cheap and failing over late

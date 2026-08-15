@@ -3,15 +3,15 @@
 
 Samples the Alfa's radio state and its reachability to the rover, and serves the
 result as line-delimited JSON over TCP. The failover decision itself is NOT made
-here - this only reports. `link_failover_node` on the ground-station PC consumes
+here - this only reports. `link_status_node` on the ground-station PC consumes
 this stream and decides when to switch the command path to LoRa.
 
-That split is deliberate and matches how the E32 is handled (ser2net on 4001):
-the mast Pi runs no ROS at all. It is a dumb appliance exporting two TCP
+That split is deliberate and matches how the E32 is handled (lora_bridge.py on
+4001): the mast Pi runs no ROS at all. It is a dumb appliance exporting two TCP
 services, and everything that needs a ROS graph runs in the Humble container on
 the GS PC where it can be debugged on a desk rather than up a mast.
 
-    tcp/4001  <- ser2net, raw E32 serial
+    tcp/4001  <- lora_bridge.py, JSON LoRa link metrics + command injection
     tcp/4002  <- this, JSON link metrics
 
 Stdlib only: nothing to install on the Pi, nothing to break on a kernel upgrade.
