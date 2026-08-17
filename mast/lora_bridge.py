@@ -524,6 +524,51 @@ def run_selftest():
     print("selftest OK")
 
 
+def expected_config(option="write"):
+    return bytes((CFG_HEAD_SAVE, CFG_ADDH, CFG_ADDL, CFG_SPED, CFG_CHAN,
+                  CFG_OPTION[option]))
+
+
+def check_config(e32):
+    """Read the module's registers at startup and complain if they are wrong.
+
+    A module that has quietly reverted to factory settings - which is what a
+    power glitch can do - produces 100% loss with zero CRC failures, because
+    the two ends are on different air data rates and neither can demodulate
+    the other. That is indistinguishable from being out of range, and it has
+    already cost this project an hour of chasing wiring that was fine.
+
+    Warn rather than refuse to start: a wrong air rate is recoverable and the
+    metrics stream is more useful up than down. The config is not rewritten
+    automatically either - that would put a flash write in the boot path to
+    paper over a fault worth seeing.
+    """
+    want = expected_config()
+    try:
+        have = e32.config_read()
+    except RuntimeError as exc:
+        print(f"WARNING: could not read the module's config ({exc}). "
+              f"Radio settings are unverified.", file=sys.stderr)
+        return False
+
+    if not have:
+        print("WARNING: module did not answer a config read. It may be "
+              "unpowered, or its RXD line is not connected.", file=sys.stderr)
+        return False
+    if have != want:
+        print(f"WARNING: module config is {hexdump(have)}, expected "
+              f"{hexdump(want)}.", file=sys.stderr)
+        if have[3] != want[3]:
+            print("         The SPED byte differs - the air data rate does not "
+                  "match the rover. Expect 100% loss with no CRC errors.",
+                  file=sys.stderr)
+        print("         Fix with: lora_bridge.py --config write", file=sys.stderr)
+        return False
+
+    print(f"module config OK: {hexdump(have)}")
+    return True
+
+
 def run_config(e32, action):
     if action == "read":
         readback = e32.config_read()
@@ -754,6 +799,11 @@ def main():
         if args.chat:
             run_chat(e32)
             return
+
+        # Everything past here moves traffic, so verify the radio is set up the
+        # way both ends assume before any of it is trusted.
+        if not args.no_gpio:
+            check_config(e32)
 
         if args.rate_sweep:
             rates = [float(r) for r in args.rate_sweep.split(",") if r.strip()]
