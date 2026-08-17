@@ -29,6 +29,10 @@ Conflicts=ser2net.service
 
 [Service]
 Type=simple
+# Python block-buffers stdout when it is not a terminal, so everything the
+# script prints - including the startup config check, which exists precisely to
+# be noticed - sits in a buffer instead of reaching the journal. Line-buffer it.
+Environment=PYTHONUNBUFFERED=1
 # Not root: /dev/ttyAMA0 and /dev/gpiochip4 are both root:dialout and admin is
 # in dialout, so the radio does not need a privileged daemon.
 User=admin
