@@ -15,7 +15,7 @@ effect from a broken setup.
 | | Wi-Fi (5 GHz ch36 HT40) | LoRa (433 MHz, 4.8 kbps air, 30 dBm) |
 |---|---|---|
 | Throughput | 170 Mbit/s down, 208 up | 168 B/s one way |
-| Round trip | 4.9 ms | 240 ms |
+| Round trip | 4.9 ms | 240 ms (ESP32 rig) / 245 ms (Jetson) |
 | Loss | 0 % | 0 % at ≤3 Hz |
 | Usable rate | — | 3 Hz polls; 4 Hz fails outright |
 
@@ -42,7 +42,7 @@ running — that is a rover-side problem and no amount of walking will fix it.
 ssh admin@10.44.0.1 'systemctl is-active link-monitor lora-bridge; ss -lntp | grep -E "400[12]"'
 
 # 3. Both radios on identical settings. Must both print C0 00 00 1B 17 44.
-ssh admin@10.44.0.1 'sudo systemctl stop lora-bridge && lora_bridge.py --config read && sudo systemctl start lora-bridge'
+ssh admin@10.44.0.1 'sudo journalctl -u lora-bridge -b | grep "module config"'
 #    ... and on the rover's ESP32 console: CFG?
 
 # 4. iperf3 present on all three machines.
@@ -50,6 +50,18 @@ iperf3 --version                                        # GS PC
 ssh admin@10.44.0.1 'iperf3 --version'                  # mast Pi
 ssh -J admin@10.44.0.1 indomitus-rover@10.42.0.1 'iperf3 --version'   # rover
 ```
+
+The mast checks itself now: `lora_bridge.py` reads the module's registers at
+startup and logs `module config OK: ...`, or a warning naming the byte that is
+wrong. That check exists because a module can quietly revert to the factory
+2.4 kbps air rate across a power interruption, and the result — 100 % loss with
+zero CRC failures — is indistinguishable from being out of range. It cost an
+hour of chasing wiring that was fine.
+
+The rover end cannot self-check: its M0/M1 are strapped low, so mode 3 is
+unreachable and the module's registers can only be read from the ESP32 bench rig
+with `CFG?`. If the rover has been power-cycled and the link is dead with no CRC
+errors, suspect this first.
 
 If the rover lacks iperf3 it has no internet either — fetch the arm64 `.deb`s
 here and `dpkg -i` them, the same way the Pi got its copy (see
