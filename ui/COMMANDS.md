@@ -43,18 +43,29 @@ camera video in the default MJPEG transport.
 # required
 ros2 launch rosbridge_server rosbridge_websocket_launch.xml    # :9090
 
-# recommended
-ros2 run web_video_server web_video_server                     # :8080
+# required for video - note the two type defaults, they are not optional
+ros2 run web_video_server web_video_server --ros-args \
+  -p port:=8080 \
+  -p default_stream_type:=ros_compressed \
+  -p default_snapshot_type:=ros_compressed
 ```
 
-Install with `ros-<distro>-rosbridge-suite` and `ros-<distro>-web-video-server`.
+Both packages are in `docker/Dockerfile`. Networking is `network_mode: host`, so
+9090 and 8080 bind the host directly and no `ports:` list is involved.
 
-`docker-compose.yml` already publishes 9090. If `web_video_server` runs inside
-the container, add `"8080:8080"` to its `ports` list as well.
+**The two `ros_compressed` defaults matter.** In any other stream type
+`web_video_server` subscribes to the *raw* image topic and transcodes it. Raw is
+1.73 MB/frame at 960x600 — about 415 Mbit/s at 30 fps, roughly four times the
+whole rover Wi-Fi link, and it will take the rover offline. `ros_compressed`
+passes the rover's existing JPEG through untouched: no decode, no re-encode, no
+subscriber on the raw topic. `mjpegUrl()`/`snapshotUrl()` in `ui/src/config.js`
+request it explicitly; these defaults are the backstop.
 
-Without `web_video_server` the console still works: switch the camera transport
-to *CompressedImage via rosbridge* in the settings dialog (gear icon), which
-carries video over the 9090 websocket instead.
+Do **not** fall back to *CompressedImage via rosbridge* in the settings dialog
+except to prove the link works. rosbridge base64s every frame into JSON (a
+170 KB frame becomes ~227 KB of text) and the browser builds a fresh `data:` URL
+per frame, so the websocket queue grows without bound — measured at 30-60 s of
+accumulated lag while frames were still arriving at the GS sub-second fresh.
 
 ## Sanity checks on the rover
 

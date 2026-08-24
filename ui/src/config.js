@@ -220,11 +220,26 @@ export function useConfig() {
   return useSyncExternalStore(subscribeConfig, getConfig, getConfig);
 }
 
-/** Builds the `web_video_server` MJPEG URL for a camera. */
+// `ros_compressed` hands the rover's existing JPEG payload straight to the
+// browser: no decode, no re-encode, no extra subscriber on the raw topic.
+//
+// Do NOT change this to `mjpeg`. That type makes web_video_server subscribe to
+// the *raw* image topic and transcode it. Raw is 1.73 MB/frame at 960x600, i.e.
+// ~415 Mbit/s at 30 fps, which is roughly four times the whole Wi-Fi link and
+// takes the rover offline. web_video_server is also started with
+// `default_stream_type`/`default_snapshot_type` set to `ros_compressed` so a URL
+// that somehow omits `type` still cannot fall back to raw.
+//
+// The trade is that `quality` and `width` are advisory here — there is no
+// transcode to apply them to. Frame size is controlled at the source instead,
+// via gscam's `camera.image_raw.jpeg_quality`.
+const PASSTHROUGH_TYPE = 'ros_compressed';
+
+/** Builds the `web_video_server` stream URL for a camera. */
 export function mjpegUrl(config, topic, { quality, width } = {}) {
   const params = new URLSearchParams({
     topic,
-    type: 'mjpeg',
+    type: PASSTHROUGH_TYPE,
     quality: String(quality ?? config.videoQuality),
   });
   const w = width ?? config.videoWidth;
@@ -236,6 +251,7 @@ export function mjpegUrl(config, topic, { quality, width } = {}) {
 export function snapshotUrl(config, topic, { quality, width } = {}) {
   const params = new URLSearchParams({
     topic,
+    type: PASSTHROUGH_TYPE,
     quality: String(quality ?? Math.min(config.videoQuality, 50)),
   });
   const w = width ?? 320;
