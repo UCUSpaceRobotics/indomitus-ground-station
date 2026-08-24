@@ -12,6 +12,14 @@ four constants that decide when the rover falls back to LoRa.
 Everything below is what the same gear does at ~1 m, so you can tell a range
 effect from a broken setup.
 
+> **The Wi-Fi column is stale as of 2026-08-23.** It was measured on the
+> out-of-tree vendor driver and with a faulty antenna on the mast Alfa, and is
+> not reproducible on the current setup. Both radios now run the mainline
+> `rtw88` driver; current bench figures are 131–140 down / 93–113 up at 40 MHz,
+> or 203–262 / 230 at 80 MHz, with 2.7 ms round trip. See
+> [STARTUP.md](STARTUP.md). Re-measure and replace this column. The LoRa column
+> is unaffected.
+
 | | Wi-Fi (5 GHz ch36 HT40) | LoRa (433 MHz, 4.8 kbps air, 30 dBm) |
 |---|---|---|
 | Throughput | 170 Mbit/s down, 208 up | 168 B/s one way |
