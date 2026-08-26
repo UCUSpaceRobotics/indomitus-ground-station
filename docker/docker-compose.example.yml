@@ -1,29 +1,25 @@
 services:
-  indomitus_rover_dev:
+  indomitus_ground_station:
     build:
       context: .
       dockerfile: docker/Dockerfile
       args:
         ROS_DISTRO: humble
-    image: indomitus-rover:humble
-    container_name: indomitus_rover_dev
-    networks:
-      - ros_network
+    image: indomitus-ground-station:humble
+    container_name: indomitus_ground_station
+    network_mode: host
     stdin_open: true      # -i
     tty: true             # -t
+    privileged: true
     environment:
-      - DISPLAY=${DISPLAY}
-      - QT_X11_NO_MITSHM=1
-      - ROS_DOMAIN_ID=42
-      - ROS_LOCALHOST_ONLY=1
+      - ROS_DOMAIN_ID=90
+      - ROS_LOCALHOST_ONLY=0
+      - JOY_BOARD_PORT=${JOY_BOARD_PORT:-/dev/ttyACM0}
+      - BUTTON_BOARD_PORT=${BUTTON_BOARD_PORT:-/dev/ttyACM1}
     volumes:
       - ./:/work:rw
       - ./src:/opt/ws/src:rw
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /dev:/dev
+    group_add:
+      - dialout
 
-networks:
-  ros_network:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.25.0.0/16

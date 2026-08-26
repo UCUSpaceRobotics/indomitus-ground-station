@@ -7,56 +7,13 @@ services:
         ROS_DISTRO: humble
     image: indomitus-ground-station:humble
     container_name: indomitus_ground_station
-    # DDS discovery is multicast and does not cross a docker bridge, so a
-    # bridged container cannot see the rover (or the Gazebo sim, which also runs
-    # host-networked) even on the same machine. Host networking is what the
-    # rover-core containers use; matching it is what makes them peers.
     network_mode: host
-    # Host networking alone gets *discovery* across, not data. Once two FastDDS
-    # participants see each other on the same host they negotiate the shared
-    # memory transport, whose segments live in /dev/shm — and docker gives every
-    # container a private /dev/shm. The result is the confusing failure where
-    # `ros2 topic info` lists the remote subscriber but not one sample ever
-    # arrives. Sharing the host IPC namespace puts both ends on the same
-    # /dev/shm; without this, talking to the Gazebo sim in rover_dev silently
-    # does nothing.
-    ipc: host
     stdin_open: true      # -i
     tty: true             # -t
     privileged: true
     environment:
-      # Must match the rover; nodes on different domains simply never see each
-      # other, with no error to say so. Verified 2026-08-25 against the running
-      # rover_prod container on the Jetson, which reports 90. The rover README's
-      # table saying 132 is stale documentation, not a real mismatch.
-      #
-      # Changing this needs `docker compose up -d --force-recreate`: a plain
-      # restart keeps the env baked in at container creation, which is how the
-      # container ended up on 42 while this file already said 90.
-      #
-      # Re-run ./docker/gen-dds-profile.sh after changing it — the SPDP
-      # multicast port in the profile is derived from the domain.
       - ROS_DOMAIN_ID=90
       - ROS_LOCALHOST_ONLY=0
-      # Does two things, both required now that the mast Pi routes between this
-      # PC (10.44.0.0/24) and the rover (10.42.0.0/24):
-      #
-      #   1. Whitelists the rover-link interface. This PC has two live
-      #      interfaces (mast link + internet), and without the whitelist
-      #      FastDDS advertises locators on both; the rover then aims user data
-      #      at the internet-side address and nothing arrives. The tell is that
-      #      discovery looks perfect — `ros2 node info` shows every topic with
-      #      correct QoS — while `ros2 topic hz` is silent on *every* topic,
-      #      cameras included.
-      #   2. Sets initialPeersList. Multicast SPDP does not cross a router, so
-      #      with the Pi in the path discovery finds nothing at all and the
-      #      topic list is empty. Unicast peers replace the multicast probe.
-      #
-      # Regenerate with ./docker/gen-dds-profile.sh whenever this PC's address
-      # on the mast link, or the rover's address, changes.
-      - FASTRTPS_DEFAULT_PROFILES_FILE=/work/docker/fastdds_rover_link.xml
-      # Two ESP32s: the joystick board (joysticks + its own switches) and the
-      # button board. Both enumerate as /dev/ttyACM*, order depends on plug-in.
       - JOY_BOARD_PORT=${JOY_BOARD_PORT:-/dev/ttyACM0}
       - BUTTON_BOARD_PORT=${BUTTON_BOARD_PORT:-/dev/ttyACM1}
     volumes:
@@ -65,6 +22,4 @@ services:
       - /dev:/dev
     group_add:
       - dialout
-    # No `ports:` — with host networking rosbridge binds the host's :9090
-    # directly, reachable from localhost and the LAN alike. Publishing a port
-    # here would be rejected as incompatible with network_mode: host.
+
