@@ -12,6 +12,11 @@ This file is the reference for the whole link, including the rover-side network
 config, because **none of the rover-side config exists in any repository** — it
 lives only on the Jetson's SD card. See [What lives where](#what-lives-where).
 
+> Both Alfa adapters were moved to the mainline `rtw88` driver on 2026-08-23.
+> [STARTUP.md](STARTUP.md) covers the current driver/AP setup, measured
+> throughput, recovery paths, and — importantly — **which of those settings do
+> not survive a reboot.** Read it before a field test.
+
 ## Topology
 
 ```
@@ -43,8 +48,8 @@ cross it**. That is why the ground station needs static discovery peers; see
 | Mast Pi (`GSRapberry`) | `admin` | `eth0` | `10.44.0.1/24` | to GS PC, via PoE injector |
 | | | `wlx00c0caba8237` | `10.42.0.2/24` | Alfa, client of the rover AP |
 | | | `wlan0` | — | onboard Wi-Fi, down; remove before competition |
-| Rover (`indomitus-rover-computer`) | `indomitus-rover` | `wlx00c0caba86c1` | `10.42.0.1/24` | Alfa, **AP** (hostapd) |
-| | | `enP8p1s0` | `10.44.0.189/24` | NM `Rover-Shared`, DHCP — **subnet collision, see below** |
+| Rover (`indomitus-rover`) | `indomitus-rover` | `wlx00c0caba86c1` | `10.42.0.1/24` | Alfa, **AP** (hostapd) |
+| | | `enP1p1s0` | `10.45.0.51/24` | NM `rover-lifeline`, static — **wired recovery path, see below** |
 | Other Wi-Fi clients | — | — | `10.42.0.50`–`10.42.0.150` | DHCP from `rover-ap-dhcp.service` |
 
 Anyone joining the AP gets a lease from the rover. That server is
@@ -78,11 +83,18 @@ Ethernet cable with no working IP config at all:
 ssh admin@fe80::8aa2:9eff:fec6:5546%<gs-iface>
 ```
 
-There is **no equivalent for the rover**. Every other Jetson interface is down,
-so if its AP fails to start the only way in is physical. Any change to the
-rover's radio must therefore arm a rollback *before* it changes anything; see
-`/usr/local/sbin/rover-ap-rollback.sh` and the header comment in the deploy
-script it came from.
+The rover now has an equivalent: the wired `rover-lifeline` path described
+under [Wired recovery path](#wired-recovery-path). **Bring it up before
+touching the radio or the Wi-Fi driver**, and the whole class of "the AP did
+not come back and the rover is now a brick on a bench" problems disappears.
+
+Without it the only way in is physical, so any unattended radio change must
+still arm a rollback *before* it changes anything; see
+`/usr/local/sbin/rover-ap-rollback.sh` and `rover-ap-apply.sh`. Be aware what
+that rollback does and does not cover: it stops and reloads services and
+modules, so it recovers a *configuration* failure. It cannot recover a driver
+whose module index was never written, or an adapter that needs a bus reset —
+for those the timer fires, reports success, and the link stays dead.
 
 ### Routing
 
@@ -101,29 +113,40 @@ default gateway that does not exist, which looks exactly like a dead link.
 > manages the radio (see below) — but it is harmless and worth leaving as a
 > fallback if the AP is ever handed back to NM.
 
-### ⚠ Subnet collision on the rover's Ethernet
+### Wired recovery path
 
-The rover's `enP8p1s0` (NM connection `Rover-Shared`) takes a DHCP lease on
-**`10.44.0.0/24` — the same subnet as the mast link** — and is *not* reachable
-from the GS PC. That leaves two routes to the same prefix:
+Earlier this Jetson had a second NIC, `enP8p1s0`, which took a DHCP lease on
+`10.44.0.0/24` — the same subnet as the mast link — and needed careful metric
+ordering to stop the rover replying down a port the ground station could not
+reach. **That NIC no longer exists.** The Jetson was reflashed to L4T R36.4.3
+(2026-08-21) and only `enP1p1s0` enumerates now; the collision is gone with it.
+
+If you plug a cable into the *other* physical port you will get a negotiated
+1000 Mbit/s link that transmits nothing at all — carrier comes from the PHY,
+but there is no driver behind it. `rx_packets: 0` on the ground-station side
+with a healthy `Link detected: yes` is the signature.
+
+The remaining port is now the rover's **out-of-band recovery path**, which is
+worth more than the bench convenience it replaced:
+
+| Host | Profile | Address |
+|---|---|---|
+| Rover `enP1p1s0` | `rover-lifeline` (autoconnect, `never-default`) | `10.45.0.51/24` |
+| GS PC `eno1` | `rover-recovery` (**autoconnect off**, on demand) | `10.45.0.1/24` |
+
+`eno1` normally runs `gs-mast` like the mast port. To use the wired path:
 
 ```
-10.44.0.0/24 via 10.42.0.2 dev wlx00c0caba86c1              # metric 0  ← wins
-10.44.0.0/24 dev enP8p1s0  proto kernel src 10.44.0.189 metric 200
+nmcli connection up rover-recovery      # on the GS PC
+ssh indomitus-rover@10.45.0.51
+nmcli connection up gs-mast             # put eno1 back afterwards
 ```
 
-Only the metric ordering keeps the link working: the Wi-Fi route is metric 0, so
-`ip route get 10.44.0.10` correctly resolves via `10.42.0.2`. If that ordering
-ever flips — a DHCP option change, an NM restart picking a lower metric — the
-rover's replies leave by an Ethernet port that cannot reach the ground station,
-and the link dies silently while every interface still looks up.
-
-It also means the rover advertises DDS locators on an address the GS PC cannot
-route to. Discovery still succeeds today, but this is precisely the shape of the
-"discovery perfect, `ros2 topic hz` silent" failure described above.
-
-**Fix properly**: either move that Ethernet off `10.44.0.0/24`, or take the
-interface down when it is not being used for bench work.
+It is deliberately not autoconnect: two profiles fighting over `eno1` is how
+you lose the mast link by accident. Note that `gs-mast` has autoconnect and
+priority 100, so it *will* reclaim `eno1` on any carrier flap — if the wired
+path goes quiet mid-session, check which profile is actually active before
+debugging anything else.
 
 ## RF configuration
 
@@ -133,8 +156,8 @@ interface down when it is not being used for bench work.
 | Security | WPA2-PSK, CCMP |
 | Band / channel | 5 GHz, ch **36** (5180 MHz) |
 | Width | **40 MHz**, HT40+ (secondary ch40), centre 5190 |
-| Mode | 802.11n HT40 — see below |
-| TX power | 15 dBm |
+| Mode | 802.11ac **VHT40** — see below |
+| TX power | 20 dBm |
 | Regulatory domain | `UA` via `wireless-regdom.service` |
 
 **Channel 36 is deliberate.** The kernel boots in regulatory domain `00`
@@ -149,19 +172,71 @@ only one that works. Picking it means a regulatory-domain failure degrades to
 ERC assigns the actual channel at the RF Check, and because netplan matches on
 SSID alone, **that is a rover-side change only** — the Pi follows automatically.
 
-### Why 300 Mbit/s and not 400
+### VHT40 does work — the note that said otherwise was wrong
 
-The AP config requests 802.11ac (`ieee80211ac=1`, `vht_capab`, `vht_oper_*`) and
-hostapd accepts it without complaint, but the beacon it actually transmits
-carries **HT capabilities and HT operation only — no VHT IE**. The `rtl8812au`
-out-of-tree driver does not implement VHT in AP mode; it advertises VHT on the
-phy but not for the AP interface type.
+This section previously said the `rtl8812au` driver does not implement VHT in
+AP mode, so the link could only reach HT40 MCS15 (300 Mbit/s PHY) and never
+VHT40 MCS9 (400 Mbit/s). **That is not correct.** On 2026-08-21
+`rover-ap-apply.sh` selected its `vht40` variant and the mast Pi associated at
+a **400 Mbit/s** PHY rate — the VHT path the config always asked for.
 
-So the link negotiates HT40 MCS15 (300 Mbit/s PHY) rather than VHT40 MCS9
-(400 Mbit/s). This is a chipset limit, not a config gap — swapping which end is
-the AP does not help, since both radios are AWUS036ACH on the same driver. The
-VHT lines are left in place, harmlessly, so a future driver fix lights up on its
-own.
+The earlier reading was most likely taken while NetworkManager was still
+contending for the radio (see below), which is enough to make hostapd fall back
+to the `ht40` variant and look like a driver limitation. If you see 300 rather
+than 400, check `cat /run/rover-ap-variant` before blaming the chipset: it
+records which config actually came up.
+
+### Two things that quietly cost most of the throughput
+
+**NetworkManager must not manage the AP radio.** Without
+`/etc/NetworkManager/conf.d/99-rover-ap-unmanaged.conf`, NM keeps trying to
+bring up its own `Hotspot` profile on the same interface and fails with
+`supplicant-timeout` every 20 s. The failure mode is nasty: hostapd reports
+`active`, `iw dev` shows `type AP` on the right channel, and **nothing
+beacons** — a client scan does not see the BSSID at all. Check
+`nmcli -t -f DEVICE,STATE device status`; the AP radio must read `unmanaged`.
+
+**Power saving must be off on both ends — including the AP.** Both radios come
+up with `power_save: on` by default, which costs roughly 4x throughput and
+turns 5 ms RTT into 81 ms average with 236 ms spikes. It is now disabled in two
+places, both persistent:
+
+- rover — `ExecStartPost=` in `rover-ap.service` runs `iw … set power_save off`
+- Pi — `rtw_power_mgnt=0` in `/etc/modprobe.d/8812au.conf`
+
+`iw dev <iface> get power_save` on both ends is the first thing to check when
+the link is up, the signal is good, and it still feels slow.
+
+### The Alfa must be switched into USB3 mode — it is not a port problem
+
+`cat /sys/bus/usb/devices/<dev>/speed` tells you the mode: **480 Mb/s is USB2,
+5000 Mb/s is USB3**.
+
+**Do not chase this by moving the adapter between ports.** The Jetson's hub is a
+Microchip **USB2744 / USB5744** — *one physical chip* whose USB2 and USB3 halves
+enumerate as two separate devices (`1-2` at 480M and `2-1` at 5000M). A device
+that appears under `1-2.x` at 480 Mb/s is not in a "USB2-only port"; it is an
+adapter that has not been told to switch modes. Moving it to another port just
+produces another `1-2.x` path at 480 Mb/s.
+
+The AWUS036ACH enumerates in USB2 mode by default and must be switched
+explicitly, via `/etc/modprobe.d/8812au.conf`:
+
+```
+options 88XXau rtw_switch_usb_mode=1 rtw_led_ctrl=1
+options 8812au rtw_switch_usb_mode=1 rtw_led_ctrl=1
+```
+
+Both module names are listed because the rover and the Pi have historically run
+different builds of this driver (`88XXau` is the aircrack-ng fork, `8812au` is
+morrownr's) and the option only applies to the module actually loaded. Reload
+the driver to apply; the adapter re-enumerates and its device path moves from
+`1-2.x` to `2-1.x`.
+
+> Note this was previously set to `rtw_switch_usb_mode=0` on the rover, which is
+> why it sat on USB2. The Pi has always had `=1`, which is why its adapter has
+> always shown 5000 Mb/s — that asymmetry is the quickest way to tell the two
+> configurations apart.
 
 ### Measured
 
@@ -173,8 +248,68 @@ Bench range (~1 m, −21 to −29 dBm), 2026-08-13, `iperf3 -t 8`:
 | 5 GHz ch36, HT20 (NM) | 82.4 | 103 | 5.1 ms |
 | **5 GHz ch36, HT40 (hostapd)** | **170** | **208** | 4.9 ms |
 
-Mbit/s. These are bench numbers and say nothing about competition range —
-**no range test has been completed yet**.
+Re-measured 2026-08-21 after the Jetson was reflashed, `iperf3 -t 8`, −28 dBm,
+AP on **VHT40** (400 Mbit/s PHY) — but with the rover's Alfa on the **USB2**
+hub, which is the cap:
+
+| Configuration | Down | Up | RTT |
+|---|---|---|---|
+| VHT40, USB2, power save **on** | 43 | 61 | 81 ms avg, 236 ms peak |
+| VHT40, USB2, power save **off** | 44 | 78 | 3.9 ms |
+| VHT40, **USB3**, aircrack `88XXau`, Pi→rover | 52 | 61 | — |
+| VHT40, **USB3**, morrownr `8812au`, Pi→rover | **105–112** | 55 | median 6 ms |
+| VHT40, **USB3**, morrownr `8812au`, GS→rover | 57 | 80 | median 6 ms |
+
+Power saving costs about a third of the throughput and all of the latency
+stability — fix that first, always.
+
+**The driver build matters more than anything else measured here.** Swapping
+the rover from the aircrack-ng `88XXau` v5.6.4.2 (2019) to morrownr `8812au`
+v5.13.6 roughly **doubled** the wireless hop, 52 → ~108 Mbit/s, with no other
+change. Prefer morrownr on both ends; it is what the original figures were
+taken on. Both are kept installed via DKMS so either can be loaded:
+
+```
+modprobe -r 8812au && modprobe 88XXau     # fall back
+modprobe -r 88XXau && modprobe 8812au     # preferred
+```
+
+Do the swap **with the wired recovery path already up** — the driver owns the
+only radio, so a failure with no second path is unrecoverable without physical
+access.
+
+### Check for a busy CPU before blaming the RF
+
+`nvpmodel_indicator.py`, the GNOME power-mode tray applet, was found spinning at
+**110% CPU** (one full core) for an entire uptime, because `nvpmodel` cannot
+read `/sys/devices/platform/gpu.0/fbp_pg_mask` on this image and it retries
+forever. It inflates latency and suppresses throughput while every RF metric
+looks perfect. Killed and disabled via `Hidden=true` in
+`/etc/xdg/autostart/nvpmodel_indicator.desktop`.
+
+The rover also boots a full GNOME session it has no use for. Worth stripping.
+
+### Still unexplained: the residual latency spikes
+
+Even with morrownr, USB3, power management off at both the `iw` and driver
+levels, and an idle CPU, latency is **bimodal**: median ~6 ms but with a long
+tail. Measured 2026-08-21:
+
+| Path | Mean | Median | Over 20 ms | Max |
+|---|---|---|---|---|
+| GS → Pi (wired only) | 0.25 ms | — | 0% | 0.4 ms |
+| Pi → rover (wifi hop) | 22.5 ms | ~3 ms | 8% | 256 ms |
+| GS → rover (forwarded) | 32.8 ms | 6 ms | 35% | 156 ms |
+
+The wired hop is perfect, so the tail originates at the wireless hop and the
+Pi's forwarding path amplifies it. Note the *reply* direction is clean — the
+rover answers the Pi's pings at a flat 2.4 ms — so it is not simply "the radio
+is slow". **Do not trust a mean here**; always look at the per-packet
+distribution, which is how the CPU-spin above was found after three separate
+mean-based readings pointed at the wrong things.
+
+This is the most likely cause of a future "the link is up but teleop feels
+laggy" report, and it is unresolved.
 
 ## Services
 
@@ -278,6 +413,25 @@ above the Pi 5's 600 mA default cap.
 | `/usr/local/sbin/rover-ap-rollback.sh` | hands the radio back to NetworkManager |
 | `/etc/systemd/system/rover-ap-dhcp.service` | DHCP for AP clients (`BindsTo` the AP) |
 | `/etc/dnsmasq-rover-ap.conf` | pool `10.42.0.50–150`, DNS disabled, AP interface only |
+| `/etc/systemd/system/bluetooth-auto-let-connect.service` | BLE auto-trust/reconnect for the gamepad |
+| `/usr/local/bin/bluetooth_let_connect.py` | the script it runs |
+| `/usr/local/sbin/wifi-apply5.sh`, `wifi-rollback.sh` | NM-era 5 GHz switch, superseded by `rover-ap-apply.sh` |
+| `/etc/udev/rules.d/80-can.rules` | **500 kbit/s, no `restart-ms`** — diverges from the repo copy, see below |
+| `/etc/udev/rules.d/99-rplidar-s2.rules` | `/dev/rplidar-s2` symlink, mode 0666 |
+| `/etc/udev/rules.d/99-slabs.rules` | 0666 on VID `2b03`/`04b4`, hidraw |
+| `/etc/modprobe.d/btusb.conf` | `enable_autosuspend=0` — the gamepad drops without it |
+| `/etc/modprobe.d/8812au.conf` | blacklists in-kernel `rtw88_8812au`; sets `rtw_switch_usb_mode`/`rtw_led_ctrl` |
+| out-of-tree `8812au` (morrownr, **preferred**) + `88XXau` (aircrack-ng, fallback) | DKMS, both installed; **rebuild after any kernel change** |
+| `/etc/xdg/autostart/nvpmodel_indicator.desktop` | `Hidden=true` — the stock applet spins at 110% CPU |
+| out-of-tree `gs_usb_adapter` CAN driver | DKMS-style build from a patched `socketcan_gs_usb` clone |
+| `/usr/local/zed/settings/SN32888826.conf` | ZED factory calibration, **serial 32888826** |
+| `~/mapir_ws/config/mapir_camera.yaml` | MAPIR camera params; records which pixel formats segfault |
+
+> **`80-can.rules` is not the repo's copy.** The Jetson runs **500 kbit/s with
+> no `restart-ms`**, deliberately, so a bus-off latches for inspection instead
+> of auto-recovering. `indomitus-rover-core/system/rules.d/80-can.rules` still
+> says `bitrate 1000000 restart-ms 100`, and `system/setup.sh --can` will
+> overwrite the Jetson's version. Decide which is correct and fix the repo.
 
 `hostapd` 2:2.10-6ubuntu2.4 was installed from a hand-carried `.deb` — the
 Jetson has no default route, so `apt install` cannot reach an archive. The
@@ -479,8 +633,18 @@ i.e. the return route is missing.
 - **No range test has been completed.** All numbers above are bench figures.
   The thresholds in both monitors are guesses; `link_monitor.py` says so in its
   own comments.
-- The rover's Ethernet collides with the mast subnet — see the warning above.
-  This is the most likely cause of a future silent link failure.
+- **The rover's root filesystem is corrupt.** `tune2fs` reports `clean with
+  errors`, 45 errors, first at 2026-07-29, and it has never been fsck'd; every
+  boot logs `mounting fs with errors`. The NVMe itself is healthy (0 media
+  errors, 0% wear) — the likely cause is 37 unsafe shutdowns. It has already
+  cost one outage: `depmod` could not write `modules.dep`, so both Wi-Fi
+  modules were present on disk but invisible to `modprobe`, which looks exactly
+  like a missing driver. The 2026-08-21 reflash did **not** recreate the
+  filesystem (the error history survived it). Wants a clean flash.
+- **The rover's Alfa is on the USB2 hub**, capping throughput at roughly a
+  third. Move it to a Bus 02 port — see above.
+- `enP8p1s0` no longer enumerates after the R36.4.3 reflash, so the rover has
+  one Ethernet port rather than two.
 - **The Pi's clock is about a week behind** and has never NTP-synced, because
   its only internet path (`wlan0`) is down. Log timestamps cannot be correlated
   with real time — this nearly caused a recent USB disconnect to be misread as a

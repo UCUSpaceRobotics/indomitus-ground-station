@@ -26,10 +26,17 @@ services:
     privileged: true
     environment:
       # Must match the rover; nodes on different domains simply never see each
-      # other, with no error to say so. Verified 2026-08-13 against the running
-      # rover_prod container on the Jetson, which reports 42. The rover README's
+      # other, with no error to say so. Verified 2026-08-25 against the running
+      # rover_prod container on the Jetson, which reports 90. The rover README's
       # table saying 132 is stale documentation, not a real mismatch.
-      - ROS_DOMAIN_ID=42
+      #
+      # Changing this needs `docker compose up -d --force-recreate`: a plain
+      # restart keeps the env baked in at container creation, which is how the
+      # container ended up on 42 while this file already said 90.
+      #
+      # Re-run ./docker/gen-dds-profile.sh after changing it — the SPDP
+      # multicast port in the profile is derived from the domain.
+      - ROS_DOMAIN_ID=90
       - ROS_LOCALHOST_ONLY=0
       # Does two things, both required now that the mast Pi routes between this
       # PC (10.44.0.0/24) and the rover (10.42.0.0/24):

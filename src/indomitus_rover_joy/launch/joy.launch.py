@@ -80,10 +80,10 @@ def generate_launch_description():
                 'joy_timeout': 0.2,
                 # The sticks run at 200 Hz; the rover link does not need to.
                 'publish_rate': 50.0,
-                # Sticks drive the rover while switch 0 is 1; the arm gets them
-                # when it is 0. Both nodes read the same switch.
+                # Sticks drive the rover while switch 0 is 0; the arm gets them
+                # when it is 1. Both nodes read the same switch.
                 'mode_switch_index': 0,
-                'mode_switch_value': 1,
+                'mode_switch_value': 0,
             }],
             remappings=[
                 # /cmd_vel is twist_mux's OUTPUT on the rover. External sources
@@ -114,7 +114,7 @@ def generate_launch_description():
                 # incoming_command_timeout is 0.1 s, so 50 Hz has wide margin.
                 'publish_rate': 50.0,
                 'mode_switch_index': 0,
-                'mode_switch_value': 0,
+                'mode_switch_value': 1,
             }],
             output='screen'
         )

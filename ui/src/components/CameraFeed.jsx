@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CameraOff, Image as ImageIcon, RefreshCw, Radio } from 'lucide-react';
+import { CameraOff, Image as ImageIcon, RefreshCw, Radio, RotateCw } from 'lucide-react';
 import { VIDEO_MODES, mjpegUrl, placeholderFor, snapshotUrl, useConfig } from '../config';
 import { useTopic, useTick, isStale } from '../ros/useTopic';
 import { fmtAge, fmtNumber, stampToMs } from '../lib/format';
+import { rotateCamera, useRotation } from '../lib/rotation';
 
 const RETRY_BASE_MS = 1000;
 const RETRY_MAX_MS = 15_000;
@@ -107,6 +108,9 @@ export default function CameraFeed({ camera, variant = 'main', className = '' })
   const [httpStatus, setHttpStatus] = useState('connecting');
   const [reloadKey, setReloadKey] = useState(0);
   const now = useTick(1000);
+  // Shared across every pane showing this camera — thumbnail, main and the
+  // fullscreen route rotate together.
+  const rotation = useRotation(camera.id);
 
   const handleStatus = useCallback((next) => setHttpStatus(next), []);
   const reload = useCallback(() => {
@@ -114,7 +118,11 @@ export default function CameraFeed({ camera, variant = 'main', className = '' })
     setReloadKey((k) => k + 1);
   }, []);
 
-  const frameIntervalMs = isThumb ? 1000 : 66;
+  // 33 ms, so a 30 fps publisher is not throttled down to 15 in the main pane.
+  // rosbridge drops frames to honour this, and the drop happens *after* the
+  // rover has already put them on the link — so this trades browser and
+  // websocket load, never link bandwidth. Thumbnails stay at 1 fps.
+  const frameIntervalMs = isThumb ? 1000 : 33;
   const rosFeed = useTopic(`${camera.topic}/compressed`, 'sensor_msgs/CompressedImage', {
     enabled: rosMode,
     throttleMs: frameIntervalMs,
@@ -165,7 +173,9 @@ export default function CameraFeed({ camera, variant = 'main', className = '' })
   const showStill = status !== 'live' && Boolean(placeholder);
 
   return (
-    <div className={`feed feed-${variant} is-${status} ${showStill ? 'has-still' : ''} ${className}`.trim()}>
+    <div
+      className={`feed feed-${variant} is-${status} rot-${rotation} ${showStill ? 'has-still' : ''} ${className}`.trim()}
+    >
       {media}
 
       {showStill && (
@@ -190,6 +200,22 @@ export default function CameraFeed({ camera, variant = 'main', className = '' })
             {status === 'connecting' ? 'acquiring feed…' : 'feed down'}
           </span>
         </div>
+      )}
+
+      {/* Rotates the picture, not the camera — see lib/rotation.js. Bottom
+          left, so it never lands on the Retry button above it. Thumbnails are
+          too small for a control and follow the main pane's angle instead. */}
+      {!isThumb && (
+        <button
+          type="button"
+          className="btn btn-sm feed-rotate"
+          onClick={() => rotateCamera(camera.id)}
+          title={`Rotate view 90° (now ${rotation}°)`}
+          aria-label={`Rotate ${camera.name} view, currently ${rotation} degrees`}
+        >
+          <RotateCw size={13} />
+          {rotation !== 0 && <span className="mono feed-rotate-deg">{rotation}°</span>}
+        </button>
       )}
 
       {/* Only in the main pane: tiles are themselves buttons, and a button

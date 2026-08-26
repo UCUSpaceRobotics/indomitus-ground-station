@@ -32,9 +32,13 @@ export const VIDEO_MODES = {
  * `switchIndex` is the bit in /switches (from switch_reader_node) that gates it.
  */
 export const DEFAULT_CAMERAS = [
-  // The ZED2i wrapper publishes through image_transport, so the base topic has
-  // a `/compressed` companion — which is exactly what `ros` transport mode
-  // appends. The other entries below are still aspirational topic names.
+  // Topics here are always the *base* image topic. Both transports append the
+  // `/compressed` suffix themselves — `ros` mode subscribes to
+  // `<topic>/compressed`, and web_video_server's `ros_compressed` type resolves
+  // the same companion — so a topic written with `/compressed` already on it
+  // ends up looking for `<topic>/compressed/compressed`, which nothing
+  // publishes. The ZED2i wrapper publishes through image_transport, so the base
+  // topic below has that companion. The other entries are still aspirational.
   { id: 'cam1', name: 'Front Navigation', topic: '/zed2i/rgb/image_rect_color', switchIndex: 0, group: 'main' },
   { id: 'cam2', name: 'Arm End Effector', topic: '/camera/arm/image_raw', switchIndex: 1, group: 'aux' },
   { id: 'cam3', name: 'Rear View', topic: '/camera/rear/image_raw', switchIndex: 2, group: 'main' },

@@ -721,6 +721,10 @@ kbd {
   height: 100%;
   background: var(--bg-sunken);
   overflow: hidden;
+  /* Makes the pane a size query container, so a quarter-turned image can be
+     measured against the pane's *other* axis (100cqh wide, 100cqw tall). The
+     pane is sized entirely by its parent, so containment costs nothing. */
+  container-type: size;
 }
 
 .feed-img {
@@ -728,6 +732,52 @@ kbd {
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+
+/* View rotation (lib/rotation.js). 180 is the easy case — the box already
+   fits. 90 and 270 must swap the box's axes before turning it, or a 16:9
+   image rotated inside a 16:9 pane overflows badly and gets clipped. */
+.feed.rot-180 .feed-img {
+  transform: rotate(180deg);
+}
+
+.feed.rot-90 .feed-img,
+.feed.rot-270 .feed-img {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 100cqh;
+  height: 100cqw;
+}
+
+.feed.rot-90 .feed-img {
+  transform: translate(-50%, -50%) rotate(90deg);
+}
+
+.feed.rot-270 .feed-img {
+  transform: translate(-50%, -50%) rotate(270deg);
+}
+
+.feed-rotate {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  z-index: 1;
+  /* Held back until the pane is hovered or the button is focused: a camera
+     wall is for watching, and six always-lit buttons compete with the video.
+     Focus-visible keeps it reachable by keyboard. */
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.feed:hover .feed-rotate,
+.feed-rotate:focus-visible {
+  opacity: 1;
+}
+
+.feed-rotate-deg {
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
 }
 
 .feed.is-error .feed-img,
