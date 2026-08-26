@@ -13,6 +13,7 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
+        (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -26,7 +27,8 @@ setup(
             'serial_joy_node = indomitus_rover_joy.serial_joy_node:main',
             'joy_to_cmd_vel_node = indomitus_rover_joy.joy_to_cmd_vel_node:main',
             'joy_to_servo_node = indomitus_rover_joy.joy_to_servo_node:main',
-            'switch_reader_node = indomitus_rover_joy.switch_reader_node:main'
+            'switch_reader_node = indomitus_rover_joy.switch_reader_node:main',
+            'gs_interpreter_node = indomitus_rover_joy.gs_interpreter_node:main'
         ],
     },
 )

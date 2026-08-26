@@ -1,3 +1,6 @@
+import os
+
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument
@@ -26,6 +29,10 @@ def generate_launch_description():
             'JOY_CALIBRATION_FILE', default_value='/work/config/joy_calibration.yaml'),
         description='YAML file the calibration wizard saves to and the node loads at startup'
     )
+
+    # Which console switch calls which rover service.
+    gs_bindings = os.path.join(
+        get_package_share_directory('indomitus_rover_joy'), 'config', 'gs_bindings.yaml')
 
     return LaunchDescription([
         joy_board_port_arg,
@@ -116,6 +123,16 @@ def generate_launch_description():
                 'mode_switch_index': 0,
                 'mode_switch_value': 1,
             }],
+            output='screen'
+        ),
+        # Console switches -> rover services. Separate from the drive path on
+        # purpose: this one talks to services that may not answer, and must
+        # never be able to delay a stop.
+        Node(
+            package='indomitus_rover_joy',
+            executable='gs_interpreter_node',
+            name='gs_interpreter',
+            parameters=[gs_bindings],
             output='screen'
         )
     ])

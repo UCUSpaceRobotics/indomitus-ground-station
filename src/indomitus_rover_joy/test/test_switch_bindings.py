@@ -1,0 +1,166 @@
+"""Console switches: what fires, and — mostly — what must not.
+
+The interesting cases here are all the ones where nothing should happen.
+A switch that fires when it shouldn't is a rover that energises its drive
+because somebody plugged a USB cable in.
+
+No ROS import anywhere in here — switch_bindings is deliberately standalone.
+"""
+
+import pytest
+
+from indomitus_rover_joy.switch_bindings import (
+    SOURCE_JOY,
+    SOURCE_SWITCHES,
+    Binding,
+    EdgeTracker,
+    build_bindings,
+)
+
+
+POWER = Binding('drive_power', SOURCE_SWITCHES, 0, '/drive/power')
+LIGHT = Binding('spotlight', SOURCE_SWITCHES, 2, '/lights/spotlight')
+
+
+def tracker(*bindings):
+    return EdgeTracker(bindings or (POWER,))
+
+
+# ── the baseline rule ────────────────────────────────────────────────────────
+
+def test_the_first_sample_never_fires():
+    # This is the safety property of the whole module. Plugging the console in,
+    # or restarting this node, must not replay every switch position at the
+    # rover: a power switch left up would energise the drive with nobody
+    # having touched anything.
+    assert tracker().update(SOURCE_SWITCHES, [1, 1, 1]) == []
+
+
+def test_a_switch_that_never_moves_never_fires_again():
+    t = tracker()
+    t.update(SOURCE_SWITCHES, [1, 0, 0])
+
+    for _ in range(10):
+        assert t.update(SOURCE_SWITCHES, [1, 0, 0]) == []
+
+
+def test_moving_a_switch_fires_its_new_position():
+    t = tracker()
+    t.update(SOURCE_SWITCHES, [0, 0, 0])
+
+    assert t.update(SOURCE_SWITCHES, [1, 0, 0]) == [(POWER, True)]
+
+
+def test_moving_it_back_fires_the_other_way():
+    t = tracker()
+    t.update(SOURCE_SWITCHES, [0, 0, 0])
+    t.update(SOURCE_SWITCHES, [1, 0, 0])
+
+    assert t.update(SOURCE_SWITCHES, [0, 0, 0]) == [(POWER, False)]
+
+
+def test_unbound_switches_are_ignored():
+    # The button board reports 23 bits and only a few are wired.
+    t = tracker()
+    t.update(SOURCE_SWITCHES, [0] * 23)
+
+    changes = t.update(SOURCE_SWITCHES, [0] + [1] * 22)
+
+    assert changes == []
+
+
+def test_several_switches_moving_at_once_all_fire():
+    t = tracker(POWER, LIGHT)
+    t.update(SOURCE_SWITCHES, [0, 0, 0])
+
+    changes = t.update(SOURCE_SWITCHES, [1, 0, 1])
+
+    assert changes == [(POWER, True), (LIGHT, True)]
+
+
+# ── the two sources are independent ──────────────────────────────────────────
+
+def test_the_joystick_board_and_the_button_board_keep_separate_baselines():
+    # The 9 switches on the joystick board arrive inside Joy.buttons; the 23 on
+    # the button board arrive on /switches. Sharing a baseline between them
+    # would make every message from one look like a change on the other.
+    mode = Binding('mode', SOURCE_JOY, 1, '/drive/compact')
+    t = tracker(POWER, mode)
+
+    t.update(SOURCE_SWITCHES, [0, 0, 0])
+    assert t.update(SOURCE_JOY, [0, 0]) == []          # joy's own first sample
+    assert t.update(SOURCE_JOY, [0, 1]) == [(mode, True)]
+    assert t.update(SOURCE_SWITCHES, [0, 0, 0]) == []  # unaffected
+
+
+# ── boards coming and going ──────────────────────────────────────────────────
+
+def test_a_frame_of_a_different_length_re_baselines_instead_of_firing():
+    # A board that reconnects reporting a different number of switches gives
+    # frames that cannot be compared to the old ones. Lining them up by index
+    # would invent edges out of the mismatch.
+    t = tracker()
+    t.update(SOURCE_SWITCHES, [0, 0, 0])
+
+    assert t.update(SOURCE_SWITCHES, [1, 1]) == []
+    # ...and the new length is now the baseline.
+    assert t.update(SOURCE_SWITCHES, [0, 1]) == [(POWER, False)]
+
+
+def test_forgetting_a_source_makes_the_next_sample_a_baseline_again():
+    # Switches can be moved while the stream is down, and where they turn up
+    # afterwards is a position, not an edge.
+    t = tracker()
+    t.update(SOURCE_SWITCHES, [0, 0, 0])
+
+    t.forget(SOURCE_SWITCHES)
+
+    assert t.update(SOURCE_SWITCHES, [1, 0, 0]) == []
+    assert t.update(SOURCE_SWITCHES, [0, 0, 0]) == [(POWER, False)]
+
+
+def test_a_binding_past_the_end_of_the_frame_is_skipped_not_crashed():
+    # A config typo, or a board reporting fewer switches than expected, must
+    # not take the console's control path down.
+    t = tracker(Binding('typo', SOURCE_SWITCHES, 40, '/drive/power'))
+    t.update(SOURCE_SWITCHES, [0, 0, 0])
+
+    assert t.update(SOURCE_SWITCHES, [1, 1, 1]) == []
+
+
+# ── inverted wiring ──────────────────────────────────────────────────────────
+
+def test_an_inverted_switch_sends_the_opposite_of_its_bit():
+    inverted = Binding('power', SOURCE_SWITCHES, 0, '/drive/power', invert=True)
+    t = tracker(inverted)
+    t.update(SOURCE_SWITCHES, [0])
+
+    assert t.update(SOURCE_SWITCHES, [1]) == [(inverted, False)]
+
+
+# ── config validation ────────────────────────────────────────────────────────
+
+def test_a_valid_spec_builds():
+    bindings = build_bindings({
+        'drive_power': {'source': 'switches', 'index': 0, 'service': '/drive/power'},
+    })
+
+    assert bindings == [Binding('drive_power', SOURCE_SWITCHES, 0, '/drive/power')]
+
+
+def test_switches_is_the_default_source():
+    binding, = build_bindings({'x': {'index': 1, 'service': '/s'}})
+
+    assert binding.source == SOURCE_SWITCHES
+
+
+@pytest.mark.parametrize('spec, wrong', [
+    ({'source': 'panel', 'index': 0, 'service': '/s'}, 'source'),
+    ({'source': 'switches', 'index': -1, 'service': '/s'}, 'index'),
+    ({'source': 'switches', 'index': 0, 'service': ''}, 'service'),
+])
+def test_a_bad_spec_is_rejected_and_names_the_binding(spec, wrong):
+    # A typo here is a switch that silently does nothing, which on a console is
+    # indistinguishable from a broken rover. Fail loudly at startup instead.
+    with pytest.raises(ValueError, match='drive_power'):
+        build_bindings({'drive_power': spec})
