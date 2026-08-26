@@ -1,0 +1,59 @@
+# /etc/systemd/system/lora-bridge.service on the ground-station mast Pi.
+#
+# Mast side of the LoRa fallback link: polls the rover over 433 MHz and serves
+# link metrics plus command injection as line-delimited JSON on tcp/4001.
+# lora_gateway_node on the GS PC is the client. See mast/README.md.
+#
+# Install:
+#   sudo install -m 755 lora_bridge.py /usr/local/sbin/
+#   sudo install -m 644 lora_frame.py  /usr/local/sbin/
+#   sudo install -m 644 lora-bridge.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now lora-bridge
+#
+# lora_frame.py has to sit next to lora_bridge.py: Python puts the script's own
+# directory first on sys.path, which is the only reason the import resolves.
+#
+# Needs python3-lgpio and python3-serial from apt. The Pi has no default route,
+# so apt cannot fetch them there - the .debs were downloaded on the GS PC and
+# installed with dpkg. Do NOT point this at ~/e32-venv: that venv exists for the
+# e32-lora-chat bench script, and a system service must not depend on a user's
+# home directory surviving.
+
+[Unit]
+Description=LoRa fallback link master (JSON over tcp/4001)
+After=network.target
+# ser2net is still installed and was the original owner of tcp/4001. Only one
+# process can bind it and the loser dies with "Address already in use", so let
+# systemd enforce the exclusion rather than leaving it to whoever starts first.
+Conflicts=ser2net.service
+
+[Service]
+Type=simple
+# Python block-buffers stdout when it is not a terminal, so everything the
+# script prints - including the startup config check, which exists precisely to
+# be noticed - sits in a buffer instead of reaching the journal. Line-buffer it.
+Environment=PYTHONUNBUFFERED=1
+# Not root: /dev/ttyAMA0 and /dev/gpiochip4 are both root:dialout and admin is
+# in dialout, so the radio does not need a privileged daemon.
+User=admin
+Group=admin
+# lgpio opens a notification FIFO called .lgd-nfy<n> in the *current working
+# directory* the moment it is imported. systemd starts services in /, which
+# admin cannot write, and the failure surfaces far from its cause:
+#   FileNotFoundError: [Errno 2] No such file or directory: '.lgd-nfy-3'
+# StateDirectory has systemd create /var/lib/lora-bridge owned by User= above.
+# Running the script by hand hides this, because the shell's cwd is writable.
+StateDirectory=lora-bridge
+WorkingDirectory=/var/lib/lora-bridge
+# Binds 10.44.0.1 only (the mast link), never 0.0.0.0 - the Pi is also on wifi.
+# Everything else is the script's default: /dev/ttyAMA0 at 9600, M0/M1/AUX on
+# BCM 23/24/17, header gpiochip found by label, 3 Hz poll.
+ExecStart=/usr/local/sbin/lora_bridge.py --bind 10.44.0.1 --tcp-port 4001
+# network.target does not mean an address has been assigned yet, so the first
+# bind after a cold boot can lose the race against netplan. Restarting covers
+# it within seconds, which is also how link-monitor.service handles it.
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

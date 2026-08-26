@@ -1,0 +1,32 @@
+# /etc/systemd/system/link-monitor.service on the ground-station mast Pi.
+#
+# Primary Wi-Fi link quality monitor. Samples the Alfa's radio state and the
+# rover's reachability and serves it as line-delimited JSON on tcp/4002;
+# link_status_node on the GS PC consumes it and decides the command path.
+# See mast/README.md.
+#
+# This unit was already deployed on the Pi before it was ever committed here -
+# it is captured now so the mast can be rebuilt from the repository rather than
+# from whatever happens to be on the SD card.
+#
+# Install:
+#   sudo install -m 755 link_monitor.py /usr/local/sbin/
+#   sudo install -m 644 link-monitor.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now link-monitor
+#
+# The interface name is derived from the Alfa's MAC (00:c0:ca:ba:82:37), so it
+# is stable across reboots but would change if that adapter were swapped.
+
+[Unit]
+Description=Primary Wi-Fi link quality monitor (JSON over tcp/4002)
+After=network.target
+
+[Service]
+Type=simple
+# Binds 10.44.0.1 only (the mast link), never 0.0.0.0 - the Pi is also on wifi.
+ExecStart=/usr/local/sbin/link_monitor.py --iface wlx00c0caba8237 --peer 10.42.0.1 --bind 10.44.0.1 --port 4002
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

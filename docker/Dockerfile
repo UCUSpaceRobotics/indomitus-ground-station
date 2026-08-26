@@ -12,6 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     iputils-ping pkg-config \
     ros-${ROS_DISTRO}-ros2launch \
     ros-${ROS_DISTRO}-teleop-twist-joy \
+    ros-${ROS_DISTRO}-rosbridge-suite \
+    ros-${ROS_DISTRO}-web-video-server \
     usbutils \
     g++ make cmake \
     && rm -rf /var/lib/apt/lists/*

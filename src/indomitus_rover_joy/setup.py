@@ -25,7 +25,8 @@ setup(
         'console_scripts': [
             'serial_joy_node = indomitus_rover_joy.serial_joy_node:main',
             'joy_to_cmd_vel_node = indomitus_rover_joy.joy_to_cmd_vel_node:main',
-            'joy_to_servo_node = indomitus_rover_joy.joy_to_servo_node:main'
+            'joy_to_servo_node = indomitus_rover_joy.joy_to_servo_node:main',
+            'switch_reader_node = indomitus_rover_joy.switch_reader_node:main'
         ],
     },
 )
