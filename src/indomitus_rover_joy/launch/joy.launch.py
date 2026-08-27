@@ -30,14 +30,36 @@ def generate_launch_description():
         description='YAML file the calibration wizard saves to and the node loads at startup'
     )
 
+    # Survives restarts, so a remapped panel stays remapped. Written by the
+    # UI through /arm_gamepad/save_bindings.
+    arm_bindings_file_arg = DeclareLaunchArgument(
+        'arm_bindings_file',
+        default_value=EnvironmentVariable(
+            'ARM_BINDINGS_FILE', default_value='/work/config/arm_bindings.yaml'),
+        description='YAML file the arm-mapping page saves to and the node loads at startup'
+    )
+
+    arm_joy_topic_arg = DeclareLaunchArgument(
+        'arm_joy_topic',
+        default_value=EnvironmentVariable('ARM_JOY_TOPIC', default_value='/arm/joy'),
+        description="Topic the arm's gamepad_servo_node should be remapped onto"
+    )
+
     # Which console switch calls which rover service.
     gs_bindings = os.path.join(
         get_package_share_directory('indomitus_rover_joy'), 'config', 'gs_bindings.yaml')
+
+    # Which console control fills which SDL gamepad slot for the arm. Shipped
+    # defaults; the UI's arm-mapping page rewrites this file via save_bindings.
+    arm_bindings = os.path.join(
+        get_package_share_directory('indomitus_rover_joy'), 'config', 'arm_bindings.yaml')
 
     return LaunchDescription([
         joy_board_port_arg,
         button_board_port_arg,
         calibration_file_arg,
+        arm_bindings_file_arg,
+        arm_joy_topic_arg,
         # One node, both boards. They are two USB ports but one panel, and
         # the shared serial reader is what lets either board reconnect on its
         # own instead of needing a relaunch.
@@ -117,6 +139,24 @@ def generate_launch_description():
                 'publish_rate': 50.0,
                 'mode_switch_index': 0,
                 'mode_switch_value': 1,
+            }],
+            output='screen'
+        ),
+        # The console, dressed as an SDL gamepad, for the arm's
+        # gamepad_servo_node. Its own topic rather than /joy: /joy already
+        # carries the console's raw frame, which is a different layout
+        # entirely. Point the rover's gamepad node at /arm/joy.
+        Node(
+            package='indomitus_rover_joy',
+            executable='arm_gamepad_node',
+            name='arm_gamepad',
+            parameters=[arm_bindings, {
+                'output_topic': LaunchConfiguration('arm_joy_topic'),
+                'bindings_file': LaunchConfiguration('arm_bindings_file'),
+                # The arm stops itself after 0.2 s of /joy silence, and the
+                # button board only speaks on change, so this publishes on a
+                # timer rather than on input.
+                'publish_rate': 50.0,
             }],
             output='screen'
         ),

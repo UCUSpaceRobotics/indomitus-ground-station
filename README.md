@@ -89,6 +89,51 @@ The **centre deadzone** slider sets the fraction of travel that reads as zero.
 Travel outside it is rescaled to the full range, so there is no jump at the
 deadzone edge.
 
+### Arm Mapping
+
+The arm is driven by `gamepad_servo_node` on the rover, which reads a **canonical
+SDL gamepad**: `axes[0..5]` and `buttons[0..14]`, where an index means the same
+physical control on every device. The console is not a gamepad — it is three
+sticks and two boards of switches in whatever order they were soldered — so
+`arm_gamepad_node` assembles that layout and publishes it on `/arm/joy`.
+
+It is a separate topic from `/joy` on purpose: `/joy` carries the console's own
+raw frame, which the drive nodes and the calibration wizard read, and it is a
+different layout entirely. Point the rover's gamepad node at this one:
+
+```bash
+ros2 launch arm_tasks gamepad.launch.py --ros-args -r joy:=/arm/joy
+```
+
+**Bind controls from the UI**, not by editing indices: open *Arm mapping* from
+the home page, press **Bind** on a row, then press the switch or move the stick
+you want. Each row's dot lights when the arm is seeing that control right now,
+which is the only real confirmation a binding took. *Apply to node* takes effect
+immediately with no restart; *Save on console* writes `arm_bindings_file`
+(default `/work/config/arm_bindings.yaml`, override with `ARM_BINDINGS_FILE`) so
+it survives one. Apply first — what gets saved is what was tested.
+
+A binding is one string per slot, `"<source>:<index>"` or
+`"<source>:<index>:inv"`, where the source is `joy` (the stick board's own 9
+switches), `switches` (the button board's 23) or `joy_axis` (the sticks). The
+`:inv` flag is for a switch wired so "on" reads 0, or a stick that pushes the
+wrong way. The node validates every binding and refuses a bad one with a reason,
+so a typo cannot half-remap the arm — a button source on a stick slot, for
+instance, would publish a hard 0 or 1 as an axis value, which is full-speed arm
+motion from a toggle.
+
+Shipped defaults live in `src/indomitus_rover_joy/config/arm_bindings.yaml`.
+They are **placeholders**, exactly like `gs_bindings.yaml`: a plausible panel
+layout, not a measured one. Bind them against the real console before a run.
+
+SDL button 6 (START) is deliberately not offered anywhere — the arm document
+marks its index as unverified on real hardware. Buttons 4, 5, 7, 8, 12 and 14 are
+absent for the opposite reason: the arm ignores them, so binding one would be a
+control that silently does nothing.
+
+With a bridge and the node running, `npm run check:arm` in `ui/` round-trips a
+mapping through rosbridge and puts it back as it found it.
+
 ### Hardware Protocol
 Both boards talk plain ASCII, and both are read by a single node,
 `console_boards`, which owns one serial port per board.
@@ -131,6 +176,7 @@ If you want to run nodes separately:
 
 ```bash
 ros2 run indomitus_rover_joy console_boards_node
+ros2 run indomitus_rover_joy arm_gamepad_node
 ros2 run indomitus_rover_joy joy_to_cmd_vel_node
 ros2 run indomitus_rover_joy joy_to_servo_node
 ```

@@ -79,6 +79,7 @@ const ROUTES = [
   ['#/right', ['Camera wall', 'feeds', 'Focus', 'Grid']],
   ['#/cam/cam1', ['Front Navigation', '/zed2i/rgb/image_rect_color']],
   ['#/calibrate', ['Stick calibration', 'Hold X at maximum', 'Centre deadzone', 'Panel buttons']],
+  ['#/arm-mapping', ['Arm mapping', 'Home pose + start servo', 'Open gripper', 'Sticks']],
   ['#/nope', []], // redirect resolves client-side; here it just must not throw
 ];
 

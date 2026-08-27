@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
             'console_boards_node = indomitus_rover_joy.console_boards_node:main',
+            'arm_gamepad_node = indomitus_rover_joy.arm_gamepad_node:main',
             'joy_to_cmd_vel_node = indomitus_rover_joy.joy_to_cmd_vel_node:main',
             'joy_to_servo_node = indomitus_rover_joy.joy_to_servo_node:main',
             'gs_interpreter_node = indomitus_rover_joy.gs_interpreter_node:main'

@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Camera, LayoutDashboard, Monitor, SlidersHorizontal } from 'lucide-react';
+import { Camera, Gamepad2, LayoutDashboard, Monitor, SlidersHorizontal } from 'lucide-react';
 import MonitorLayout from '../components/MonitorLayout';
 import { useConfig } from '../config';
 import { useRos } from '../ros/context';
@@ -53,11 +53,15 @@ export default function Home() {
 
         <section className="home-section">
           <h3>Setup</h3>
-          <p className="muted">Capture the travel of each panel stick and set the centre deadzone.</p>
+          <p className="muted">Capture the travel of each panel stick, and bind console controls to the arm.</p>
           <div className="home-chips">
             <Link to="/calibrate" className="chip-link">
               <SlidersHorizontal size={13} />
               Stick calibration
+            </Link>
+            <Link to="/arm-mapping" className="chip-link">
+              <Gamepad2 size={13} />
+              Arm mapping
             </Link>
           </div>
         </section>

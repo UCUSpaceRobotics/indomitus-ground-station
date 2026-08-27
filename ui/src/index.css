@@ -1702,3 +1702,80 @@ kbd {
   align-items: center;
   gap: 3px;
 }
+
+/* ── Arm mapping ───────────────────────────────────────────────────────── */
+
+.arm-map {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.arm-map th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-faint);
+  padding: 0 6px 4px;
+}
+
+.arm-map td {
+  padding: 5px 6px;
+  border-top: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+/* Section headers inside the table: the sticks and the buttons are read as
+   two different things, and an operator scanning for one should not have to
+   read past the other. */
+.arm-map .arm-group td {
+  border-top: none;
+  padding: 10px 6px 2px;
+  font-size: 11px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.arm-map tr.is-learning td {
+  background: var(--surface-2);
+}
+
+.arm-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+/* Live state of that control in the frame the arm receives. Deliberately a
+   dot rather than a number: the question it answers is "is the arm seeing
+   this right now", which is binary. */
+.arm-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: var(--border-strong);
+  vertical-align: middle;
+}
+
+.arm-dot.is-on {
+  background: var(--ok);
+  box-shadow: 0 0 6px var(--ok);
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+@media (max-width: 720px) {
+  .arm-map td:nth-child(2) {
+    display: none;
+  }
+  .arm-map th:nth-child(2) {
+    display: none;
+  }
+}

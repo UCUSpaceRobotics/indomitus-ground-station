@@ -82,6 +82,8 @@ export const DEFAULT_TOPICS = {
   joy: '/joy',
   /** Uncalibrated 0..1000 stick values — what the calibration wizard reads. */
   joyRaw: '/joy/raw',
+  /** The console dressed as an SDL gamepad, which is what the arm reads. */
+  armJoy: '/arm/joy',
   cmdVel: '/cmd_vel',
   servoTwist: '/servo_node/delta_twist_cmds',
   odom: '/odom',
@@ -116,6 +118,8 @@ function defaults() {
     topics: DEFAULT_TOPICS,
     /** Node the calibration wizard reconfigures, for its parameter services. */
     joyNode: '/console_boards',
+    /** Node the arm-mapping page reconfigures. */
+    armNode: '/arm_gamepad',
   };
 }
 
@@ -180,6 +184,7 @@ function normalize(raw) {
     // localStorage, and pointing the wizard at a node that no longer exists
     // fails as "calibration did not save" with nothing in the log.
     joyNode: migrateJoyNode(String(merged.joyNode || base.joyNode).replace(/\/+$/, ''), base.joyNode),
+    armNode: String(merged.armNode || base.armNode).replace(/\/+$/, ''),
   };
 }
 
