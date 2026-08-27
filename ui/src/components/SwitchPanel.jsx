@@ -41,7 +41,7 @@ export default function SwitchPanel() {
       {!live && (
         <p className="panel-note">
           No data on <span className="mono">{config.topics.switches}</span> — check that
-          <span className="mono"> switch_reader_node</span> is running and the box is plugged in.
+          <span className="mono"> console_boards</span> is running and the box is plugged in.
         </p>
       )}
       <ul className="switch-list">

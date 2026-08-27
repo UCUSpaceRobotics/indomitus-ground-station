@@ -9,7 +9,7 @@ class JoyToCmdVelNode(Node):
     def __init__(self):
         super().__init__('joy_to_cmd_vel_node')
 
-        # Axis indices into the 6-axis Joy from serial_joy_node:
+        # Axis indices into the 6-axis Joy from console_boards:
         #   0 J0X  1 J0Y  2 J1X  3 J1Y  4 J2X  5 J2Y
         # Mirrors rover_teleop/config/joy.yaml on the rover, so the panel and the
         # bluetooth gamepad steer identically: J0 translates (forward/back and

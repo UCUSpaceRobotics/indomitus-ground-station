@@ -73,43 +73,46 @@ switch you want. Bindings persist in the browser. This is the point of the
 feature: both hands stay on the sticks while calibrating, no mouse needed.
 
 *Apply to node* pushes `axis_min` / `axis_center` / `axis_max` / `deadzone` to
-`serial_joy_node` over `rcl_interfaces/srv/SetParameters`; it takes effect
+`console_boards` over `rcl_interfaces/srv/SetParameters`; it takes effect
 immediately, no restart. *Save on rover* calls
-`/serial_joy_node/save_calibration` (`std_srvs/Trigger`), which writes
+`/console_boards/save_calibration` (`std_srvs/Trigger`), which writes
 `calibration_file` (default `/work/config/joy_calibration.yaml`, override with
 `JOY_CALIBRATION_FILE`). The node reloads that file on startup, so the sticks
 only need calibrating once.
 
-The file is written in `ros2 param` layout, so `ros2 param load /serial_joy_node
-joy_calibration.yaml` works too.
+The file is written in `ros2 param` layout, so `ros2 param load /console_boards
+joy_calibration.yaml` works too. A file saved before the two board nodes were
+merged is keyed `serial_joy_node`; it is still read, and rewritten under the
+new name the next time you save.
 
 The **centre deadzone** slider sets the fraction of travel that reads as zero.
 Travel outside it is rescaled to the full range, so there is no jump at the
 deadzone edge.
 
 ### Hardware Protocol
-Both boards talk plain ASCII at 115200 baud.
+Both boards talk plain ASCII, and both are read by a single node,
+`console_boards`, which owns one serial port per board.
 
-**Joystick board** (`microcontrollers_indomitus/esp32_switch+joy`) — one line
-every 20 ms:
+**Joystick board** (`microcontrollers_indomitus/esp32_switch+joy`) — 921600
+baud, one line every 5 ms (`POLL_INTERVAL_MS` in its firmware):
 
 ```
 110110011|498|501|500|512|499|503
 ```
 
 9 switch bits (PCF8575 @ 0x24), then 6 axes as `0..1000` in the order
-J0X, J0Y, J1X, J1Y, J2X, J2Y. `serial_joy_node` normalizes each axis to
+J0X, J0Y, J1X, J1Y, J2X, J2Y. `console_boards` normalizes each axis to
 `-1.0 .. 1.0` around 500 and publishes `sensor_msgs/Joy` on `/joy`, with the
 9 switches carried in `Joy.buttons`.
 
-**Button board** (`microcontrollers_indomitus/esp_32_switches+buttons`) — 23
-bits, `1 = pressed`, sent **only when the debounced state changes**:
+**Button board** (`microcontrollers_indomitus/esp_32_switches+buttons`) — 115200
+baud, 23 bits, `1 = pressed`, sent **only when the debounced state changes**:
 
 ```
 00000000000000000000000
 ```
 
-`switch_reader_node` latches that state and republishes it at 10 Hz on
+`console_boards` latches that state and republishes it at 10 Hz on
 `/switches` (`std_msgs/Int32MultiArray`) so the UI does not mark it stale
 between presses.
 
@@ -127,8 +130,7 @@ source install/setup.bash
 If you want to run nodes separately:
 
 ```bash
-ros2 run indomitus_rover_joy serial_joy_node
-ros2 run indomitus_rover_joy switch_reader_node
+ros2 run indomitus_rover_joy console_boards_node
 ros2 run indomitus_rover_joy joy_to_cmd_vel_node
 ros2 run indomitus_rover_joy joy_to_servo_node
 ```

@@ -300,7 +300,7 @@ export default function CalibrationPanel() {
       {!live && (
         <p className="panel-note is-warn">
           Nothing arriving on <span className="mono">{config.topics.joyRaw}</span>. Start{' '}
-          <span className="mono">serial_joy_node</span> — calibration needs the raw values.
+          <span className="mono">console_boards</span> — calibration needs the raw values.
         </p>
       )}
 

@@ -1,3 +1,22 @@
+"""Both console boards in one node.
+
+The operator console has two ESP32 boards on two USB serial ports, and until now
+each had its own node with its own copy of the same read-lines-off-a-port loop.
+They are one piece of hardware from the operator's point of view — the panel in
+front of them — and splitting them bought nothing but two places to fix every
+serial bug. This node owns both ports and publishes what each board says on its
+own topic:
+
+    /joy       sensor_msgs/Joy        calibrated sticks + the joy board's switches
+    /joy/raw   Int32MultiArray        the same sticks, uncalibrated
+    /switches  Int32MultiArray        the button board's 23 toggles
+
+The two boards stay independent inside here. They run at different bauds and
+different rates, and one being unplugged must never stop the other publishing —
+that asymmetry is the whole reason the console can lose its sticks and keep its
+switches, which is exactly how the last outage presented.
+"""
+
 import os
 import re
 
@@ -10,28 +29,142 @@ from sensor_msgs.msg import Joy
 from std_msgs.msg import Int32MultiArray
 from std_srvs.srv import Trigger
 
-# Line emitted by the esp32_switch+joy board at 50 Hz, e.g.
+# Line emitted by the esp32_switch+joy board at 200 Hz, e.g.
 #   110110011|498|501|500|512|499|503
 # 9 switch bits from the PCF8575 at 0x24, then one 0..1000 value per joystick
 # axis in the order J0X, J0Y, J1X, J1Y, J2X, J2Y.
-LINE_RE = re.compile(r'^([01]+)((?:\|-?\d+)+)$')
+JOY_LINE_RE = re.compile(r'^([01]+)((?:\|-?\d+)+)$')
+
+# Line emitted by the esp_32_switches+buttons board: one '0'/'1' char per wired
+# pin, 1 = pressed (the firmware already normalizes both expanders). With the
+# default IGNORE_MASKs that is 23 chars, left to right:
+#   expander A (0x20): P02 P03 P04 P05 P06 P07 P12 P13 P14
+#   expander B (0x22): P00..P07 P10 P11 P12 P13 P14 P17
+# The board only sends on a debounced change, never periodically.
+SWITCH_LINE_RE = re.compile(r'^[01]+$')
 
 NUM_AXES = 6
 CALIBRATION_KEYS = ('axis_map', 'axis_min', 'axis_center', 'axis_max', 'axis_scale', 'deadzone')
 
+# Calibration used to be saved under the joystick node's name. Read it back so
+# a console that was calibrated before the two nodes merged keeps its sticks.
+LEGACY_CALIBRATION_KEY = 'serial_joy_node'
 
-class SerialJoyNode(Node):
+
+class BoardPort:
+    """One board's serial port, reopened for as long as it takes.
+
+    The old nodes opened the port once in __init__ and set self.ser = None
+    forever if that failed, so a board plugged in a second after startup — or
+    one that re-enumerated when its USB dropped — stayed dead until someone
+    relaunched. Both boards go through this class now, so both recover.
+    """
+
+    def __init__(self, node, label, port, baud, retry_period=2.0):
+        self.node = node
+        self.label = label
+        self.port = port
+        self.baud = baud
+        self.retry_period = retry_period
+
+        self.ser = None
+        self.buffer = b''
+        self._next_open_attempt = 0.0
+        self._open_failure_logged = False
+
+    def _now(self):
+        return self.node.get_clock().now().nanoseconds / 1e9
+
+    def _open(self):
+        """Try to open the port, at most once every retry_period seconds."""
+        now = self._now()
+        if now < self._next_open_attempt:
+            return False
+        self._next_open_attempt = now + self.retry_period
+
+        try:
+            self.ser = serial.Serial(self.port, self.baud, timeout=0.1)
+        except Exception as e:
+            # Once per outage, not once per retry: at a 2 s retry this would
+            # otherwise be 30 identical lines a minute for an unplugged board.
+            if not self._open_failure_logged:
+                self.node.get_logger().error(
+                    f"{self.label}: cannot open {self.port} at {self.baud}: {e}")
+                self._open_failure_logged = True
+            self.ser = None
+            return False
+
+        self.node.get_logger().info(f"{self.label}: connected to {self.port} at {self.baud}")
+        self._open_failure_logged = False
+        self.buffer = b''
+        return True
+
+    def _drop(self, reason):
+        self.node.get_logger().error(f"{self.label}: {reason}; will reopen {self.port}")
+        try:
+            if self.ser is not None:
+                self.ser.close()
+        except Exception:
+            pass
+        self.ser = None
+        self.buffer = b''
+        self._next_open_attempt = self._now() + self.retry_period
+
+    def read_lines(self):
+        """Return every complete line waiting on the port, oldest first."""
+        if self.ser is None and not self._open():
+            return []
+
+        try:
+            waiting = self.ser.in_waiting
+            if waiting:
+                self.buffer += self.ser.read(waiting)
+        except Exception as e:
+            # A yanked USB cable surfaces here, not at open().
+            self._drop(f"serial read error: {e}")
+            return []
+
+        if b'\n' not in self.buffer:
+            return []
+
+        *lines, self.buffer = self.buffer.split(b'\n')
+
+        decoded = []
+        for raw in lines:
+            line = raw.decode('utf-8', errors='ignore').strip()
+            if line:
+                decoded.append(line)
+        return decoded
+
+    def close(self):
+        try:
+            if self.ser is not None:
+                self.ser.close()
+        except Exception:
+            pass
+        self.ser = None
+
+
+class ConsoleBoardsNode(Node):
     def __init__(self):
-        super().__init__('serial_joy_node')
+        super().__init__('console_boards')
 
-        # Parameters
-        self.declare_parameter('port', '/dev/ttyACM0')
+        # ── ports ────────────────────────────────────────────────────────────
+        # Defaults are by-id paths on purpose. Both boards are the same CH340,
+        # so /dev/ttyACM* numbering is kernel enumeration order and swaps on a
+        # replug; addressing them by ACM number is how the sticks end up silent
+        # while the switches still work. Override per machine in the repo .env.
+        self.declare_parameter('joy_port', '/dev/ttyACM0')
         # Must match UART_BAUD in the joystick board's firmware. 115200 cannot
         # carry 200 Hz: a 35-byte frame costs 3.0 ms on the wire there.
-        self.declare_parameter('baudrate', 921600)
+        self.declare_parameter('joy_baudrate', 921600)
+        self.declare_parameter('switch_port', '/dev/ttyACM1')
+        self.declare_parameter('switch_baudrate', 115200)
+
+        # ── joystick calibration ─────────────────────────────────────────────
         # Per-axis calibration, in raw firmware units (0..1000). Captured by the
         # calibration wizard in the UI, which writes them back over
-        # /serial_joy_node/set_parameters.
+        # /console_boards/set_parameters.
         #
         # `axis_max` is whichever end the operator pushed when asked for the
         # positive direction, so it may be numerically *below* axis_min on a
@@ -40,7 +173,7 @@ class SerialJoyNode(Node):
         # Logical -> physical axis. axis_map[i] is the position in the firmware's
         # frame that logical axis i reads from, so /joy always exposes the same
         # meaning regardless of which ADC pin a pot is actually soldered to.
-        # The calibration wizard discovers this by watching which axis moves.
+        # The calibration wizard discovers this by watching which axis moved.
         self.declare_parameter('axis_map', list(range(NUM_AXES)))
         self.declare_parameter('axis_min', [0.0] * NUM_AXES)
         self.declare_parameter('axis_center', [500.0] * NUM_AXES)
@@ -56,10 +189,18 @@ class SerialJoyNode(Node):
         # at startup. Empty disables both.
         self.declare_parameter('calibration_file', '')
 
-        port = self.get_parameter('port').get_parameter_value().string_value
-        baud = self.get_parameter('baudrate').get_parameter_value().integer_value
+        # ── button board ─────────────────────────────────────────────────────
+        # Expected number of bits per frame; 0 accepts any length.
+        self.declare_parameter('num_switches', 23)
+        # Republish the latched switch state at this rate so late subscribers
+        # still see it. 0.0 publishes only when the board reports a change.
+        self.declare_parameter('switch_publish_rate', 10.0)
+
         self.invert_switches = self.get_parameter('invert_switches').get_parameter_value().bool_value
         self.calibration_file = self.get_parameter('calibration_file').get_parameter_value().string_value
+        self.num_switches = self.get_parameter('num_switches').get_parameter_value().integer_value
+        switch_publish_rate = self.get_parameter(
+            'switch_publish_rate').get_parameter_value().double_value
 
         self.axis_map = self._axis_map_param()
         self.axis_min = self._axis_param('axis_min', 0.0)
@@ -73,30 +214,38 @@ class SerialJoyNode(Node):
         # Let the UI push calibration without a restart.
         self.add_on_set_parameters_callback(self._on_set_parameters)
 
-        # Initialize Serial
-        try:
-            self.ser = serial.Serial(port, baud, timeout=0.1)
-            self.get_logger().info(f"Connected to {port} at {baud}")
-        except Exception as e:
-            self.get_logger().error(f"Failed to connect to {port}: {e}")
-            self.ser = None
-
-        self.buffer = b''
+        self.joy_board = BoardPort(
+            self, 'joy board',
+            self.get_parameter('joy_port').get_parameter_value().string_value,
+            self.get_parameter('joy_baudrate').get_parameter_value().integer_value)
+        self.switch_board = BoardPort(
+            self, 'button board',
+            self.get_parameter('switch_port').get_parameter_value().string_value,
+            self.get_parameter('switch_baudrate').get_parameter_value().integer_value)
 
         # Publishers. `joy/raw` carries the uncalibrated 0..1000 values, which is
         # what the calibration wizard has to see — it cannot capture endpoints
         # through the very mapping it is trying to produce.
-        self.publisher_ = self.create_publisher(Joy, 'joy', 10)
-        self.raw_publisher_ = self.create_publisher(Int32MultiArray, 'joy/raw', 10)
+        self.joy_pub = self.create_publisher(Joy, 'joy', 10)
+        self.joy_raw_pub = self.create_publisher(Int32MultiArray, 'joy/raw', 10)
+        self.switch_pub = self.create_publisher(Int32MultiArray, 'switches', 10)
+
+        self.switch_state = None
 
         self.save_srv = self.create_service(
             Trigger, '~/save_calibration', self._on_save_calibration)
 
-        # Poll at the firmware's send rate (200 Hz). Polling slower than the
-        # board sends does not merely add latency: read_serial keeps only the
-        # newest frame in the buffer and drops the rest, so a 50 Hz timer
-        # against a 200 Hz board would discard 3 frames in 4.
-        self.timer = self.create_timer(0.005, self.read_serial)
+        # Poll at the joy board's send rate (200 Hz). Polling slower than the
+        # board sends does not merely add latency: read_joy keeps only the
+        # newest frame and drops the rest, so a 50 Hz timer against a 200 Hz
+        # board would discard 3 frames in 4.
+        self.joy_timer = self.create_timer(0.005, self.read_joy)
+        # The button board debounces over 4 x 5 ms polls and sends on change.
+        self.switch_timer = self.create_timer(0.01, self.read_switches)
+
+        if switch_publish_rate > 0.0:
+            self.switch_republish_timer = self.create_timer(
+                1.0 / switch_publish_rate, self.republish_switches)
 
     # ── parameters ───────────────────────────────────────────────────────────
 
@@ -181,6 +330,13 @@ class SerialJoyNode(Node):
                 loaded = yaml.safe_load(f) or {}
             # Stored in ros2 param-file layout so `ros2 param load` also works.
             values = loaded.get(self.get_name(), {}).get('ros__parameters', {})
+            if not values:
+                # Pre-merge file. Saving once rewrites it under this node's
+                # name, so this path is only taken until the next save.
+                values = loaded.get(LEGACY_CALIBRATION_KEY, {}).get('ros__parameters', {})
+                if values:
+                    self.get_logger().info(
+                        f"Loading calibration saved under '{LEGACY_CALIBRATION_KEY}'")
 
             for key in CALIBRATION_KEYS:
                 if key not in values:
@@ -260,33 +416,15 @@ class SerialJoyNode(Node):
 
         return max(-1.0, min(1.0, norm))
 
-    # ── serial ───────────────────────────────────────────────────────────────
+    # ── joy board ────────────────────────────────────────────────────────────
 
-    def read_serial(self):
-        if self.ser is None:
-            return
-
-        try:
-            waiting = self.ser.in_waiting
-            if waiting:
-                self.buffer += self.ser.read(waiting)
-        except Exception as e:
-            self.get_logger().error(f"Serial read error: {e}")
-            return
-
-        if b'\n' not in self.buffer:
-            return
-
-        *lines, self.buffer = self.buffer.split(b'\n')
+    def read_joy(self):
+        lines = self.joy_board.read_lines()
 
         # Only the newest complete frame is worth publishing; anything older is
         # already stale by the time we get here.
-        for raw in reversed(lines):
-            line = raw.decode('utf-8', errors='ignore').strip()
-            if not line:
-                continue
-
-            match = LINE_RE.match(line)
+        for line in reversed(lines):
+            match = JOY_LINE_RE.match(line)
             if match is None:
                 # Boot banner and I2C warnings share the port with the data.
                 self.get_logger().debug(f"Ignoring non-data line: {line}")
@@ -302,7 +440,7 @@ class SerialJoyNode(Node):
         # to see physical axes to work out which one moved.
         raw_msg = Int32MultiArray()
         raw_msg.data = axis_values
-        self.raw_publisher_.publish(raw_msg)
+        self.joy_raw_pub.publish(raw_msg)
 
         msg = Joy()
         msg.header.stamp = self.get_clock().now().to_msg()
@@ -321,21 +459,57 @@ class SerialJoyNode(Node):
             for bit in switch_bits
         ]
 
-        self.publisher_.publish(msg)
+        self.joy_pub.publish(msg)
+
+    # ── button board ─────────────────────────────────────────────────────────
+
+    def read_switches(self):
+        for line in self.switch_board.read_lines():
+            if not SWITCH_LINE_RE.match(line):
+                # Boot banner and the per-expander I2C warnings.
+                self.get_logger().debug(f"Ignoring non-data line: {line}")
+                continue
+
+            if self.num_switches > 0 and len(line) != self.num_switches:
+                self.get_logger().warn(
+                    f"Expected {self.num_switches} switch bits, got {len(line)}: {line}"
+                )
+                continue
+
+            self.switch_state = [int(bit) for bit in line]
+            self.publish_switches()
+
+    def republish_switches(self):
+        if self.switch_state is not None:
+            self.publish_switches()
+
+    def publish_switches(self):
+        msg = Int32MultiArray()
+        msg.data = self.switch_state
+        self.switch_pub.publish(msg)
 
 
 def main(args=None):
     rclpy.init(args=args)
-    node = SerialJoyNode()
+    node = ConsoleBoardsNode()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
-        if node.ser:
-            node.ser.close()
-        node.destroy_node()
-        rclpy.shutdown()
+        # Ctrl-C used to end in a traceback that read like a crash, from two
+        # different races: rclpy's own SIGINT handler has usually shut the
+        # context down already, so a second shutdown() raises, and a repeated
+        # Ctrl-C can land inside these calls. Nothing here is worth a stack
+        # trace on the way out.
+        try:
+            node.joy_board.close()
+            node.switch_board.close()
+            node.destroy_node()
+            if rclpy.ok():
+                rclpy.shutdown()
+        except (KeyboardInterrupt, Exception):
+            pass
 
 
 if __name__ == '__main__':

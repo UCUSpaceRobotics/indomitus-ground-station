@@ -29,7 +29,7 @@ export const VIDEO_MODES = {
 /**
  * `group` decides which monitor a camera lands on, replacing the old
  * "slice the array by index" coupling.
- * `switchIndex` is the bit in /switches (from switch_reader_node) that gates it.
+ * `switchIndex` is the bit in /switches (from console_boards) that gates it.
  */
 export const DEFAULT_CAMERAS = [
   // Topics here are always the *base* image topic. Both transports append the
@@ -115,7 +115,7 @@ function defaults() {
     cameras: DEFAULT_CAMERAS,
     topics: DEFAULT_TOPICS,
     /** Node the calibration wizard reconfigures, for its parameter services. */
-    joyNode: '/serial_joy_node',
+    joyNode: '/console_boards',
   };
 }
 
@@ -156,6 +156,12 @@ function normalizeCameras(cameras) {
     }));
 }
 
+const LEGACY_JOY_NODES = ['/serial_joy_node', '/switch_reader_node'];
+
+function migrateJoyNode(name, fallback) {
+  return LEGACY_JOY_NODES.includes(name) ? fallback : name;
+}
+
 function normalize(raw) {
   const base = defaults();
   const merged = { ...base, ...raw };
@@ -169,7 +175,11 @@ function normalize(raw) {
     theme: merged.theme === 'light' ? 'light' : 'dark',
     cameras: normalizeCameras(merged.cameras),
     topics: { ...DEFAULT_TOPICS, ...(merged.topics || {}) },
-    joyNode: String(merged.joyNode || base.joyNode).replace(/\/+$/, ''),
+    // serial_joy_node and switch_reader_node were merged into one node. A
+    // console that saved its settings before that has the old name in
+    // localStorage, and pointing the wizard at a node that no longer exists
+    // fails as "calibration did not save" with nothing in the log.
+    joyNode: migrateJoyNode(String(merged.joyNode || base.joyNode).replace(/\/+$/, ''), base.joyNode),
   };
 }
 
