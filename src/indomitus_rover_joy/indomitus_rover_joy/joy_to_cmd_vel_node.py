@@ -1,5 +1,6 @@
 import rclpy
 from rcl_interfaces.msg import SetParametersResult
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from sensor_msgs.msg import Joy
 from geometry_msgs.msg import Twist
@@ -160,11 +161,17 @@ def main(args=None):
     node = JoyToCmdVelNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
+        # ExternalShutdownException is the normal path when the launch file or a
+        # supervisor stops us, and rclpy's own SIGINT handler has usually shut
+        # the context down before the finally block runs — so an unguarded
+        # shutdown() raises. Both used to end a plain Ctrl-C in a traceback and
+        # a non-zero exit, which reads as a crash in the launch log.
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

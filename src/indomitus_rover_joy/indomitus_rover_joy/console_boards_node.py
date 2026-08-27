@@ -24,6 +24,7 @@ import rclpy
 import serial
 import yaml
 from rcl_interfaces.msg import SetParametersResult
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from sensor_msgs.msg import Joy
 from std_msgs.msg import Int32MultiArray
@@ -494,22 +495,23 @@ def main(args=None):
     node = ConsoleBoardsNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
+        # ExternalShutdownException is the normal path when the launch file or a
+        # supervisor stops us, and rclpy's own SIGINT handler has usually shut
+        # the context down before the finally block runs — so an unguarded
+        # shutdown() raises. Both read as a crash in the launch log.
         pass
     finally:
-        # Ctrl-C used to end in a traceback that read like a crash, from two
-        # different races: rclpy's own SIGINT handler has usually shut the
-        # context down already, so a second shutdown() raises, and a repeated
-        # Ctrl-C can land inside these calls. Nothing here is worth a stack
-        # trace on the way out.
+        # Closing a serial port is interruptible, and a second Ctrl-C lands
+        # here; the ports go away with the process regardless.
         try:
             node.joy_board.close()
             node.switch_board.close()
-            node.destroy_node()
-            if rclpy.ok():
-                rclpy.shutdown()
-        except (KeyboardInterrupt, Exception):
+        except KeyboardInterrupt:
             pass
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

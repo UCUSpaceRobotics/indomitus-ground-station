@@ -249,26 +249,35 @@ export function useConfig() {
 // via gscam's `camera.image_raw.jpeg_quality`.
 const PASSTHROUGH_TYPE = 'ros_compressed';
 
+// web_video_server does not percent-decode its query parameters: it hands the
+// raw string straight to the ROS topic-name validator. URLSearchParams escapes
+// '/' as %2F, so every tile failed with
+//   Invalid topic name ... '%2Fcamera%2Fleft%2Fimage_raw'
+// and the UI showed placeholders while the server log filled with warnings.
+// A '/' is legal in a query string unescaped, and a valid ROS topic name
+// contains nothing else that needs escaping, so build the query by hand.
+function videoQuery(topic, quality, width) {
+  const parts = [
+    `topic=${topic}`,
+    `type=${PASSTHROUGH_TYPE}`,
+    `quality=${quality}`,
+  ];
+  if (width > 0) parts.push(`width=${width}`);
+  return parts.join('&');
+}
+
 /** Builds the `web_video_server` stream URL for a camera. */
 export function mjpegUrl(config, topic, { quality, width } = {}) {
-  const params = new URLSearchParams({
-    topic,
-    type: PASSTHROUGH_TYPE,
-    quality: String(quality ?? config.videoQuality),
-  });
-  const w = width ?? config.videoWidth;
-  if (w > 0) params.set('width', String(w));
-  return `${config.videoServerUrl}/stream?${params.toString()}`;
+  const q = videoQuery(topic, quality ?? config.videoQuality, width ?? config.videoWidth);
+  return `${config.videoServerUrl}/stream?${q}`;
 }
 
 /** Single still frame, used for camera thumbnails so we do not open N streams. */
 export function snapshotUrl(config, topic, { quality, width } = {}) {
-  const params = new URLSearchParams({
+  const q = videoQuery(
     topic,
-    type: PASSTHROUGH_TYPE,
-    quality: String(quality ?? Math.min(config.videoQuality, 50)),
-  });
-  const w = width ?? 320;
-  if (w > 0) params.set('width', String(w));
-  return `${config.videoServerUrl}/snapshot?${params.toString()}`;
+    quality ?? Math.min(config.videoQuality, 50),
+    width ?? 320,
+  );
+  return `${config.videoServerUrl}/snapshot?${q}`;
 }
