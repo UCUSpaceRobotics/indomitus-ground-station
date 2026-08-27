@@ -1,0 +1,55 @@
+# Which console control drives which arm function.
+#
+# The arm's gamepad_servo_node reads a canonical SDL gamepad: axes[0..5] and
+# buttons[0..14], where an index means the same physical control on every
+# device. arm_gamepad_node builds that layout out of the console's two boards,
+# and this file says which console control fills each slot.
+#
+# Value format:  "<source>:<index>"  or  "<source>:<index>:inv"  or  "" (unbound)
+#
+#   joy        the joystick board's own 9 switches, in Joy.buttons
+#   switches   the button board's 23 switches, on /switches
+#   joy_axis   the joystick board's 6 analogue axes, in Joy.axes
+#   :inv       this control reads backwards — a switch wired so "on" is 0, or a
+#              stick that pushes the wrong way
+#
+# Nothing here needs editing by hand. The UI's *Arm mapping* page binds a slot
+# by asking the operator to press the control they want, writes the result over
+# rcl_interfaces/SetParameters, and persists it with /arm_gamepad/save_bindings
+# — which rewrites this file. Editing it by hand still works, and is the way to
+# ship a known-good panel layout with the repo.
+#
+# NOTE: joy[0] is the drive/arm mode switch that joy_to_cmd_vel_node and
+# joy_to_servo_node both read. Do not bind it here.
+#
+# NOTE: switches 0-3 are spoken for by gs_bindings.yaml (drive power, drive
+# compact, spotlight, beautiful). The button defaults below start at 4 to stay
+# clear of them. The UI flags a control bound to two things, but it does not
+# refuse it — one switch driving two functions is occasionally deliberate.
+#
+# The indices below are PLACEHOLDERS, exactly like gs_bindings.yaml: they are a
+# plausible layout, not a measured one. A wrong index here is an arm that moves
+# on the wrong control, so bind them from the UI against the real panel before a
+# run. SDL button 6 (START) is deliberately not offered at all — the arm
+# document marks its index as unverified on real hardware.
+arm_gamepad:
+  ros__parameters:
+    # ── sticks ───────────────────────────────────────────────────────────────
+    # Console J0 becomes the arm's left stick (translation in the camera's
+    # frame), J1 becomes the right stick (orientation, or up/down). That mirrors
+    # joy_to_servo_node's existing axis choice, so the sticks do not swap
+    # meaning when the operator moves between driving and the arm.
+    bind.left_x: joy_axis:0      # move left/right (view Y)
+    bind.left_y: joy_axis:1      # move forward/back (view X)
+    bind.right_x: joy_axis:2     # yaw, or roll while shift is held
+    bind.right_y: joy_axis:3     # up/down, or pitch while shift is held
+
+    # ── buttons ──────────────────────────────────────────────────────────────
+    bind.safe_pose: switches:4      # A  — home pose + start servo
+    bind.sampling_home: switches:5  # B  — sampling home (drill_sampling only)
+    bind.exit: switches:6           # X  — exit teleop
+    bind.drill_home: switches:7     # Y  — drill home (drill_sampling only)
+    bind.push_boost: switches:8     # LB — hold for x3 speed
+    bind.shift: switches:9          # RB — hold: right stick becomes pitch/roll
+    bind.gripper_open: switches:10  # D-Pad up   — open gripper
+    bind.gripper_close: switches:11 # D-Pad left — close gripper

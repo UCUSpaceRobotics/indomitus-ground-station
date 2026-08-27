@@ -6,6 +6,7 @@ import LeftMonitor from './pages/LeftMonitor';
 import RightMonitor from './pages/RightMonitor';
 import SingleCamera from './pages/SingleCamera';
 import Calibration from './pages/Calibration';
+import ArmMapping from './pages/ArmMapping';
 import { useConfig } from './config';
 
 export default function App() {
@@ -26,6 +27,7 @@ export default function App() {
           <Route path="/right" element={<RightMonitor />} />
           <Route path="/cam/:cameraId" element={<SingleCamera />} />
           <Route path="/calibrate" element={<Calibration />} />
+          <Route path="/arm-mapping" element={<ArmMapping />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </RosProvider>
