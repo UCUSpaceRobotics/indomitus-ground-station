@@ -180,20 +180,33 @@ yet — see below.
 
 `ui/` holds the browser console the operator drives from: camera wall, live
 telemetry, joystick command path and the rover log. It talks to ROS over
-`rosbridge_websocket` (port 9090, already published by `docker-compose.yml`) and
-takes camera video from `web_video_server`.
+`rosbridge_websocket` on port 9090 and takes camera video from
+`web_video_server` on port 8080.
+
+Both are started by `gs.launch.py`, together with the serial boards and the mast
+link, so on the console there is nothing to start by hand:
+
+```bash
+docker compose -f docker/docker-compose.gs.yaml --project-directory . up -d
+```
+
+The root `docker-compose.yml` is the development counterpart: same image and
+same environment, but it launches nothing and leaves you a shell. Start pieces
+there yourself, or run the same launch with the parts you do not want switched
+off:
+
+```bash
+docker compose up -d
+docker compose exec indomitus_ground_station bash
+ros2 launch indomitus_rover_bringup gs.launch.py use_joy:=false use_comms:=false
+```
+
+The UI itself runs on the host, not in the container:
 
 ```bash
 cd ui
 npm install
 npm run dev     # http://localhost:5173, also reachable from the LAN
-```
-
-Inside the container, alongside the joystick launch:
-
-```bash
-ros2 launch rosbridge_server rosbridge_websocket_launch.xml
-ros2 run web_video_server web_video_server
 ```
 
 See `ui/README.md` for configuration and `ui/COMMANDS.md` for the full command

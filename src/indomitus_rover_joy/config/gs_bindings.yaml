@@ -1,0 +1,50 @@
+# Which console switch calls which rover service.
+#
+# Every service here is std_srvs/SetBool and takes an absolute value, because a
+# latching switch knows its own position. The rover's onboard joystick calls
+# the matching .../toggle services instead, since a momentary button can only
+# ask the owner to invert what it holds. Neither side keeps a copy of the
+# state — the rover publishes it on drive/state and lights/state.
+#
+#   source:  "switches" = the button board's 23 bits on /switches
+#            "joy"      = the joystick board's own 9 switches, in Joy.buttons
+#   index:   position within that source
+#   invert:  true when the switch is wired so that "up" reads as 0
+#
+# NOTE: joy[0] is the drive/arm mode switch that joy_to_cmd_vel_node and
+# joy_to_servo_node both read. Do not bind it here.
+#
+# The indices below are placeholders — set them to whatever is actually under
+# each label on the console. A wrong index is a switch that silently drives the
+# wrong thing, so check them against the panel before a run.
+gs_interpreter:
+  ros__parameters:
+    bindings:
+      - drive_power
+      - drive_compact
+      - spotlight
+      - beautiful
+
+    drive_power:
+      source: switches
+      index: 0
+      service: /drive/power
+      invert: false
+
+    drive_compact:
+      source: switches
+      index: 1
+      service: /drive/compact
+      invert: false
+
+    spotlight:
+      source: switches
+      index: 2
+      service: /lights/spotlight
+      invert: false
+
+    beautiful:
+      source: switches
+      index: 3
+      service: /lights/beautiful
+      invert: false
