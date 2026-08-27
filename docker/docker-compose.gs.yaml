@@ -1,3 +1,14 @@
+# Operator mode: starts the whole console stack, nothing left to run by hand.
+#
+# --project-directory is not optional. Paths here are relative to the repo root,
+# and without it compose resolves them against docker/, mounting the wrong tree
+# at /work.
+#
+#   docker compose -f docker/docker-compose.gs.yaml --project-directory . up -d
+#
+# The root docker-compose.yml is the development counterpart: same image, same
+# environment, but it leaves you a shell instead of launching anything.
+
 services:
   indomitus_ground_station:
     build:
