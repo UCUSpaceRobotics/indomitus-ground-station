@@ -38,14 +38,19 @@ def generate_launch_description():
         joy_board_port_arg,
         button_board_port_arg,
         calibration_file_arg,
+        # One node, both boards. They are two USB ports but one panel, and
+        # the shared serial reader is what lets either board reconnect on its
+        # own instead of needing a relaunch.
         Node(
             package='indomitus_rover_joy',
-            executable='serial_joy_node',
-            name='serial_joy_node',
+            executable='console_boards_node',
+            name='console_boards',
             parameters=[{
-                'port': LaunchConfiguration('joy_board_port'),
+                'joy_port': LaunchConfiguration('joy_board_port'),
                 # Must match UART_BAUD in the joystick board's firmware.
-                'baudrate': 921600,
+                'joy_baudrate': 921600,
+                'switch_port': LaunchConfiguration('button_board_port'),
+                'switch_baudrate': 115200,
                 # Defaults assume a perfectly centred 0..1000 stick; the
                 # calibration wizard in the UI overwrites these at runtime and
                 # persists them to calibration_file.
@@ -56,18 +61,8 @@ def generate_launch_description():
                 'axis_scale': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
                 'invert_switches': False,
                 'calibration_file': LaunchConfiguration('calibration_file'),
-            }],
-            output='screen'
-        ),
-        Node(
-            package='indomitus_rover_joy',
-            executable='switch_reader_node',
-            name='switch_reader_node',
-            parameters=[{
-                'port': LaunchConfiguration('button_board_port'),
-                'baudrate': 115200,
                 'num_switches': 23,
-                'publish_rate': 10.0,
+                'switch_publish_rate': 10.0,
             }],
             output='screen'
         ),

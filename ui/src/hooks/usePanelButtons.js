@@ -19,7 +19,7 @@ export function usePanelButtons(onPress) {
   const config = useConfig();
 
   // 50 ms so a short press is not missed between render flushes; the button
-  // board only transmits on change, and switch_reader republishes at 10 Hz.
+  // board only transmits on change, and console_boards republishes at 10 Hz.
   const joy = useTopic(config.topics.joy, 'sensor_msgs/Joy', { throttleMs: 0, renderMs: 50 });
   const switches = useTopic(config.topics.switches, 'std_msgs/Int32MultiArray', {
     throttleMs: 0,

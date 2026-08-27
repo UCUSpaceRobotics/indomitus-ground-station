@@ -6,5 +6,6 @@ log/
 
 # Generated per machine by docker/gen-dds-profile.sh on every container start.
 docker/fastdds_rover_link.xml
+
 .env
-.claud/
+.claude/

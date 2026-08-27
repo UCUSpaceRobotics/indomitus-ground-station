@@ -252,7 +252,7 @@ export default function SettingsDialog({ open, onClose }) {
             </div>
             <p className="field-hint">
               Switch index is the bit in <span className="mono">/switches</span> that enables the
-              feed, matching the toggle order in <span className="mono">switch_reader_node</span>.
+              feed, matching the toggle order in <span className="mono">console_boards</span>.
             </p>
           </section>
 
