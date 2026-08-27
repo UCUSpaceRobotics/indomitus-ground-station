@@ -3,4 +3,6 @@ __pycache__/
 install/
 build/
 log/
-docker-compose.yaml
+
+# Generated per machine by docker/gen-dds-profile.sh on every container start.
+docker/fastdds_rover_link.xml
