@@ -6,9 +6,14 @@ import { isStale, useTick, useTopic } from '../ros/useTopic';
 import { clamp, fmtNumber, NO_VALUE } from '../lib/format';
 
 /** Two-axis stick position — the quickest way to see a dead axis, an inverted
- *  sign or a deadzone that is set too wide. */
+ *  sign or a deadzone that is set too wide.
+ *
+ *  Both screen axes are flipped, not just the vertical one. These are REP-103
+ *  values, where +y is *left* and +z is a *left* turn, so a left push arriving
+ *  as +1.0 is correct and has to be drawn to the left. Flipping only the
+ *  vertical is what made the pad mirror every horizontal axis. */
 function AxisPad({ x, y, label, live }) {
-  const px = 50 + clamp(x ?? 0, -1, 1) * 42;
+  const px = 50 - clamp(x ?? 0, -1, 1) * 42;
   const py = 50 - clamp(y ?? 0, -1, 1) * 42;
   return (
     <figure className={`axis-pad ${live ? '' : 'is-nodata'}`}>
