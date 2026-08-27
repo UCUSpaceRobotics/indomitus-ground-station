@@ -8,18 +8,30 @@ services:
     image: indomitus-ground-station:humble
     container_name: indomitus_ground_station
     network_mode: host
+    ipc: host # must be host
     stdin_open: true      # -i
     tty: true             # -t
     privileged: true
+
     environment:
-      - ROS_DOMAIN_ID=90
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-90}
       - ROS_LOCALHOST_ONLY=0
+      - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
+      - FASTRTPS_DEFAULT_PROFILES_FILE=/work/docker/fastdds_rover_link.xml
+      - ROVER_LINK_PREFIX=${ROVER_LINK_PREFIX:-10.44.0.}
+      - ROVER_PEER=${ROVER_PEER:-10.42.0.1}
+      - ROVER_PEER_RANGE=${ROVER_PEER_RANGE:-50}
       - JOY_BOARD_PORT=${JOY_BOARD_PORT:-/dev/ttyACM0}
       - BUTTON_BOARD_PORT=${BUTTON_BOARD_PORT:-/dev/ttyACM1}
+      - JOY_CALIBRATION_FILE=${JOY_CALIBRATION_FILE:-/work/config/joy_calibration.yaml}
+      - MAST_HOST=${MAST_HOST:-10.44.0.1}
+
+      - ROSBRIDGE_PORT=${ROSBRIDGE_PORT:-9090}
+      - VIDEO_SERVER_PORT=${VIDEO_SERVER_PORT:-8080}
+
     volumes:
       - ./:/work:rw
       - ./src:/opt/ws/src:rw
       - /dev:/dev
     group_add:
       - dialout
-
