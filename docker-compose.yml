@@ -21,6 +21,11 @@ services:
       - ROVER_LINK_PREFIX=${ROVER_LINK_PREFIX:-10.44.0.}
       - ROVER_PEER=${ROVER_PEER:-10.42.0.1}
       - ROVER_PEER_RANGE=${ROVER_PEER_RANGE:-50}
+      # Extra local addresses for the DDS interface whitelist, on top of the
+      # rover link. Empty by default; set it to also carry ROS traffic on a
+      # segment the rover path does not reach (e.g. the campus LAN address).
+      # Takes effect only on container (re)creation, not `docker compose restart`.
+      - DDS_EXTRA_ADDRS=${DDS_EXTRA_ADDRS:-}
       - JOY_BOARD_PORT=${JOY_BOARD_PORT:-/dev/ttyACM0}
       - BUTTON_BOARD_PORT=${BUTTON_BOARD_PORT:-/dev/ttyACM1}
       - JOY_CALIBRATION_FILE=${JOY_CALIBRATION_FILE:-/work/config/joy_calibration.yaml}

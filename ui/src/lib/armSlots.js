@@ -15,7 +15,7 @@
 export const BUTTON_SLOTS = [
   { key: 'safe_pose', sdl: 'A', index: 0, action: 'Home pose + start servo' },
   { key: 'sampling_home', sdl: 'B', index: 1, action: 'Sampling home (drill tool only)' },
-  { key: 'exit', sdl: 'X', index: 2, action: 'Exit teleop' },
+  { key: 'astrobio_home', sdl: 'X', index: 2, action: 'Astrobio home' },
   { key: 'drill_home', sdl: 'Y', index: 3, action: 'Drill home (drill tool only)' },
   { key: 'push_boost', sdl: 'LB / L1', index: 9, action: 'Hold: speed ×3' },
   { key: 'shift', sdl: 'RB / R1', index: 10, action: 'Hold: right stick becomes pitch/roll' },
@@ -32,6 +32,8 @@ export const AXIS_SLOTS = [
 
 export const ALL_SLOTS = [...BUTTON_SLOTS, ...AXIS_SLOTS];
 export const ALL_KEYS = ALL_SLOTS.map((slot) => slot.key);
+/** Mirrors SLOTS_BY_KEY in arm_bindings.py, for looking a slot up by binding. */
+export const SLOTS_BY_KEY = Object.fromEntries(ALL_SLOTS.map((slot) => [slot.key, slot]));
 
 const SOURCE_LABELS = {
   joy: 'stick board switch',

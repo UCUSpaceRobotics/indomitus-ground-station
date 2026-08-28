@@ -22,16 +22,30 @@
 # NOTE: joy[0] is the drive/arm mode switch that joy_to_cmd_vel_node and
 # joy_to_servo_node both read. Do not bind it here.
 #
-# NOTE: switches 0-3 are spoken for by gs_bindings.yaml (drive power, drive
-# compact, spotlight, beautiful). The button defaults below start at 4 to stay
-# clear of them. The UI flags a control bound to two things, but it does not
-# refuse it — one switch driving two functions is occasionally deliberate.
+# MEASURED CONSOLE LAYOUT (probed on 2026-08-27 against the real panel, by
+# turning every control on and seeing which ones stayed on):
 #
-# The indices below are PLACEHOLDERS, exactly like gs_bindings.yaml: they are a
-# plausible layout, not a measured one. A wrong index here is an arm that moves
-# on the wrong control, so bind them from the UI against the real panel before a
-# run. SDL button 6 (START) is deliberately not offered at all — the arm
-# document marks its index as unverified on real hardware.
+#   /switches  latching:       0-8, 10, 11, 12, 13, 14, 17, 22
+#   /switches  self-resetting: 9, 15, 16, 18, 19, 20, 21
+#   joy        latching:       0-8 (all of them; joy[0] is the drive/arm mode)
+#
+# Every arm control here wants a self-resetting button. The six press-once
+# functions do because the arm acts on the rising edge and a toggle would have to
+# be flipped back before it could fire again; push boost does because a boost
+# left latched on is an arm moving at x3 that nobody asked to move.
+#
+# There are seven such buttons and eight arm controls, so exactly one has to sit
+# on a toggle. It is `shift`, deliberately: it is the only one whose effect is a
+# mode rather than an action, it is the least dangerous to leave on, and on the
+# stick board it falls under the hand already steering.
+#
+# What else holds a control: switches 0-7 are camera selection (DEFAULT_CAMERAS
+# in the UI), switches 8, 10, 11, 12 are rover functions (gs_bindings.yaml), and
+# joy 0 is the mode switch. The UI flags a control bound to two things, but does
+# not refuse it — one switch driving two functions is occasionally deliberate.
+#
+# SDL button 6 (START) is deliberately not offered at all — the arm document
+# marks its index as unverified on real hardware.
 arm_gamepad:
   ros__parameters:
     # ── sticks ───────────────────────────────────────────────────────────────
@@ -45,11 +59,15 @@ arm_gamepad:
     bind.right_y: joy_axis:3     # up/down, or pitch while shift is held
 
     # ── buttons ──────────────────────────────────────────────────────────────
-    bind.safe_pose: switches:4      # A  — home pose + start servo
-    bind.sampling_home: switches:5  # B  — sampling home (drill_sampling only)
-    bind.exit: switches:6           # X  — exit teleop
-    bind.drill_home: switches:7     # Y  — drill home (drill_sampling only)
-    bind.push_boost: switches:8     # LB — hold for x3 speed
-    bind.shift: switches:9          # RB — hold: right stick becomes pitch/roll
-    bind.gripper_open: switches:10  # D-Pad up   — open gripper
-    bind.gripper_close: switches:11 # D-Pad left — close gripper
+    # The console's seven self-resetting buttons, in panel order.
+    bind.safe_pose: switches:9        # A  — home pose + start servo
+    bind.sampling_home: switches:15   # B  — sampling home (drill_sampling only)
+    bind.astrobio_home: switches:16   # X  — astrobio home
+    bind.drill_home: switches:18      # Y  — drill home (drill_sampling only)
+    bind.gripper_open: switches:19    # D-Pad up   — open gripper / drill
+    bind.gripper_close: switches:20   # D-Pad left — close gripper / undrill
+    bind.push_boost: switches:21      # LB — hold for x3 speed
+
+    # The one that has to be a toggle; see the header. Flipped on for pitch/roll
+    # work and back off after, rather than held.
+    bind.shift: joy:1                 # RB — right stick becomes pitch/roll

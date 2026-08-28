@@ -48,6 +48,10 @@ services:
       - ROVER_LINK_PREFIX=${ROVER_LINK_PREFIX:-10.44.0.}
       - ROVER_PEER=${ROVER_PEER:-10.42.0.1}
       - ROVER_PEER_RANGE=${ROVER_PEER_RANGE:-50}
+      # Extra local addresses for the DDS interface whitelist, on top of the
+      # rover link. Empty by default; set it to also carry ROS traffic on a
+      # segment the rover path does not reach (e.g. the campus LAN address).
+      - DDS_EXTRA_ADDRS=${DDS_EXTRA_ADDRS:-}
 
       # --- console hardware --------------------------------------------------
       - JOY_BOARD_PORT=${JOY_BOARD_PORT:-/dev/ttyACM0}

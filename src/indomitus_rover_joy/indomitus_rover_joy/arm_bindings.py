@@ -63,7 +63,7 @@ class Slot:
 BUTTON_SLOTS = (
     Slot('safe_pose', 0, 'A', 'Home pose + start servo'),
     Slot('sampling_home', 1, 'B', 'Sampling home (drill_sampling tool only)'),
-    Slot('exit', 2, 'X', 'Exit teleop'),
+    Slot('astrobio_home', 2, 'X', 'Astrobio home'),
     Slot('drill_home', 3, 'Y', 'Drill home (drill_sampling tool only)'),
     Slot('push_boost', 9, 'LB / L1', 'Hold: speed x3'),
     Slot('shift', 10, 'RB / R1', 'Hold: right stick becomes pitch/roll'),

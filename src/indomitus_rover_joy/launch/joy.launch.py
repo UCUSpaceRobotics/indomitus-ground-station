@@ -45,7 +45,9 @@ def generate_launch_description():
         description="Topic the arm's gamepad_servo_node should be remapped onto"
     )
 
-    # Which console switch calls which rover service.
+    # Which console control calls which rover service. Shipped defaults; the
+    # UI's settings dialog rewrites this file via ~/save_bindings, the same way
+    # the arm-mapping page rewrites arm_bindings.yaml below.
     gs_bindings = os.path.join(
         get_package_share_directory('indomitus_rover_joy'), 'config', 'gs_bindings.yaml')
 
@@ -167,7 +169,9 @@ def generate_launch_description():
             package='indomitus_rover_joy',
             executable='gs_interpreter_node',
             name='gs_interpreter',
-            parameters=[gs_bindings],
+            # The file twice over: once as a parameter file for its contents,
+            # once as a path so the node knows where to write it back.
+            parameters=[gs_bindings, {'bindings_file': gs_bindings}],
             output='screen'
         )
     ])

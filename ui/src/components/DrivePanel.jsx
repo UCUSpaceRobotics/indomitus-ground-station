@@ -4,6 +4,7 @@ import { Bar } from './Readout';
 import { useConfig } from '../config';
 import { isStale, useTick, useTopic } from '../ros/useTopic';
 import { clamp, fmtNumber, NO_VALUE } from '../lib/format';
+import { isArmMode } from '../lib/roverFunctions';
 
 /** Two-axis stick position — the quickest way to see a dead axis, an inverted
  *  sign or a deadzone that is set too wide.
@@ -64,6 +65,11 @@ export default function DrivePanel() {
   const servoLive = !isStale(servo.receivedAt, now, 1000);
 
   const axes = joy.message?.axes || [];
+  // J2 exists on the board at all times, but only the arm reads it: while the
+  // mode switch says drive, joy_to_cmd_vel_node uses J0 and J1 and nothing
+  // touches axes 4-5. Showing a stick that moves the dot and nothing else is
+  // how an operator concludes the arm is broken, so it appears with the mode.
+  const armMode = joyLive && isArmMode(joy.message);
   const twist = cmdVel.message;
   const servoTwist = servo.message?.twist;
 
@@ -73,15 +79,23 @@ export default function DrivePanel() {
       title="Command path"
       bodyClassName="stack"
       actions={
-        <span className="mono muted">
-          joy {joyLive ? `${fmtNumber(joy.hz, 0)} Hz` : NO_VALUE} · cmd_vel{' '}
-          {cmdLive ? `${fmtNumber(cmdVel.hz, 0)} Hz` : NO_VALUE}
-        </span>
+        <>
+          <span className={`chip ${armMode ? 'is-warn' : 'is-ok'}`}>
+            {joyLive ? (armMode ? 'arm' : 'drive') : 'no sticks'}
+          </span>
+          <span className="mono muted">
+            joy {joyLive ? `${fmtNumber(joy.hz, 0)} Hz` : NO_VALUE} · cmd_vel{' '}
+            {cmdLive ? `${fmtNumber(cmdVel.hz, 0)} Hz` : NO_VALUE}
+          </span>
+        </>
       }
     >
       <div className="axis-pads">
         <AxisPad x={axes[0]} y={axes[1]} label="Stick 1" live={joyLive && axes.length >= 2} />
         <AxisPad x={axes[2]} y={axes[3]} label="Stick 2" live={joyLive && axes.length >= 4} />
+        {armMode && (
+          <AxisPad x={axes[4]} y={axes[5]} label="Stick 3" live={axes.length >= 6} />
+        )}
       </div>
 
       <div className="subhead">

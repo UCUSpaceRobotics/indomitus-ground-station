@@ -120,6 +120,14 @@ function defaults() {
     joyNode: '/console_boards',
     /** Node the arm-mapping page reconfigures. */
     armNode: '/arm_gamepad',
+    /** Node that turns console switches into rover service calls. */
+    interpreterNode: '/gs_interpreter',
+    /**
+     * Console control -> rover function. The node is authoritative once these
+     * are applied; this copy is the editing draft, so the dialog opens on what
+     * was last sent rather than empty while the rover is unreachable.
+     */
+    functionBinds: [],
   };
 }
 
@@ -147,8 +155,32 @@ function readQuery() {
 }
 
 /** Drops unknown keys and repairs partially-saved camera entries. */
+/**
+ * Drop anything malformed rather than letting it reach the node, which would
+ * refuse the whole set and leave the operator with an Apply that just fails.
+ * Exclusivity is not enforced here - the dialog releases a control as it is
+ * claimed, and the node is the backstop.
+ */
+function normalizeBinds(binds) {
+  if (!Array.isArray(binds)) return [];
+  return binds
+    .filter((b) => b && typeof b.function === 'string' && b.function)
+    .map((b, i) => ({
+      id: String(b.id || `bind${i}`),
+      function: b.function,
+      source: b.source === 'joy' ? 'joy' : 'switches',
+      index: Math.max(0, Math.round(Number(b.index) || 0)),
+      invert: Boolean(b.invert),
+      ...(b.function === 'custom' ? { service: String(b.service || '') } : {}),
+    }));
+}
+
 function normalizeCameras(cameras) {
-  if (!Array.isArray(cameras) || cameras.length === 0) return DEFAULT_CAMERAS;
+  // An empty list is a real answer — the settings dialog saves the camera table
+  // as it is edited, so deleting the last row has to stay deleted instead of
+  // resurrecting the shipped set on the next write. A fresh install still gets
+  // DEFAULT_CAMERAS, from `defaults()`.
+  if (!Array.isArray(cameras)) return DEFAULT_CAMERAS;
   return cameras
     .filter((cam) => cam && typeof cam.id === 'string' && typeof cam.topic === 'string')
     .map((cam, i) => ({
@@ -185,6 +217,8 @@ function normalize(raw) {
     // fails as "calibration did not save" with nothing in the log.
     joyNode: migrateJoyNode(String(merged.joyNode || base.joyNode).replace(/\/+$/, ''), base.joyNode),
     armNode: String(merged.armNode || base.armNode).replace(/\/+$/, ''),
+    interpreterNode: String(merged.interpreterNode || base.interpreterNode).replace(/\/+$/, ''),
+    functionBinds: normalizeBinds(merged.functionBinds),
   };
 }
 

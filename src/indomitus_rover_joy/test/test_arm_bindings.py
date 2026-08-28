@@ -39,7 +39,7 @@ def test_the_arm_document_s_button_indices_are_what_we_publish():
     expected = {
         'safe_pose': 0,      # A
         'sampling_home': 1,  # B
-        'exit': 2,           # X
+        'astrobio_home': 2,  # X
         'drill_home': 3,     # Y
         'push_boost': 9,     # LB
         'shift': 10,         # RB
@@ -198,11 +198,11 @@ def test_two_boards_are_read_independently():
 def test_one_control_on_two_slots_is_reported():
     found = conflicts(build_bindings({
         'safe_pose': 'switches:4',
-        'exit': 'switches:4',
+        'astrobio_home': 'switches:4',
     }))
     assert len(found) == 1
     first, second, bind = found[0]
-    assert {first, second} == {'safe_pose', 'exit'}
+    assert {first, second} == {'safe_pose', 'astrobio_home'}
     assert bind == Bind(SOURCE_SWITCHES, 4, False)
 
 
@@ -210,9 +210,9 @@ def test_the_same_index_on_different_boards_is_not_a_conflict():
     # index 4 means different hardware on each board.
     assert conflicts(build_bindings({
         'safe_pose': 'switches:4',
-        'exit': 'joy:4',
+        'astrobio_home': 'joy:4',
     })) == []
 
 
 def test_unbound_slots_never_conflict():
-    assert conflicts(build_bindings({'safe_pose': '', 'exit': ''})) == []
+    assert conflicts(build_bindings({'safe_pose': '', 'astrobio_home': ''})) == []

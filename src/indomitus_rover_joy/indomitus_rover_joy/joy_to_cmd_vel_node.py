@@ -1,3 +1,5 @@
+import math
+
 import rclpy
 from rcl_interfaces.msg import SetParametersResult
 from rclpy.executors import ExternalShutdownException
@@ -23,6 +25,11 @@ class JoyToCmdVelNode(Node):
         self.declare_parameter('linear_x_scale', 0.5)
         self.declare_parameter('linear_y_scale', 0.5)
         self.declare_parameter('angular_z_scale', 1.0)
+        # The console's sticks travel in a square gate, not a circular one, so
+        # both axes can read 1.0 at once. A full diagonal is then sqrt(2) times
+        # the per-axis scale, which is how a 1 m/s rover ends up commanded at
+        # 1.41. This caps the magnitude of the linear pair; 0 disables it.
+        self.declare_parameter('max_linear_speed', 1.0)
         # Stop the rover if Joy messages stop arriving (serial unplugged, board
         # reset, node killed). 0.0 disables the watchdog.
         self.declare_parameter('joy_timeout', 0.5)
@@ -64,6 +71,9 @@ class JoyToCmdVelNode(Node):
             self.scales[name] = self.get_parameter(f'{name}_scale').get_parameter_value().double_value
         self.add_on_set_parameters_callback(self._on_set_parameters)
 
+        self.max_linear_speed = self.get_parameter(
+            'max_linear_speed').get_parameter_value().double_value
+
         self.joy_timeout = self.get_parameter('joy_timeout').get_parameter_value().double_value
         self.last_joy_time = None
         self.stopped = True
@@ -90,6 +100,8 @@ class JoyToCmdVelNode(Node):
                     self.axes[name] = int(param.value)
                 elif param.name == f'{name}_scale':
                     self.scales[name] = float(param.value)
+            if param.name == 'max_linear_speed':
+                self.max_linear_speed = float(param.value)
             if param.name == 'publish_rate':
                 rate = float(param.value)
                 self.min_publish_period = 1.0 / rate if rate > 0.0 else 0.0
@@ -138,6 +150,18 @@ class JoyToCmdVelNode(Node):
         twist.linear.x = get_axis_val('linear_x')
         twist.linear.y = get_axis_val('linear_y')
         twist.angular.z = get_axis_val('angular_z')
+
+        # Square gate: a full diagonal is 1.0 on both axes, so the magnitude
+        # runs to sqrt(2) even though neither axis is over its own limit.
+        # Shrink the pair along its own direction rather than clamping each
+        # axis separately - per-axis clamping keeps the magnitude and bends
+        # the heading, so the rover would not go where the stick points.
+        # Yaw is a separate rate in rad/s and is not part of this.
+        speed = math.hypot(twist.linear.x, twist.linear.y)
+        if 0.0 < self.max_linear_speed < speed:
+            shrink = self.max_linear_speed / speed
+            twist.linear.x *= shrink
+            twist.linear.y *= shrink
 
         self.stopped = False
         self.publisher_.publish(twist)
