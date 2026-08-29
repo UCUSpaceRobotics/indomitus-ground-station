@@ -154,6 +154,8 @@ function defaults() {
      * index -1 leaves the node on whatever its `twist_mode` parameter says.
      */
     driveModeBind: { source: 'switches', index: -1 },
+    /** Steering mode used when no switch is bound, and the fallback when one is. */
+    twistMode: 'row',
   };
 }
 
@@ -256,6 +258,7 @@ function normalize(raw) {
     driveNode: String(merged.driveNode || base.driveNode).replace(/\/+$/, ''),
     functionBinds: normalizeBinds(merged.functionBinds),
     driveModeBind: normalizeModeBind(merged.driveModeBind),
+    twistMode: merged.twistMode === 'curvature' ? 'curvature' : 'row',
   };
 }
 

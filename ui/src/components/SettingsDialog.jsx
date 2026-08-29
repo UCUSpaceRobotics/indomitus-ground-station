@@ -324,6 +324,7 @@ export default function SettingsDialog({ open, onClose }) {
         `${draft.driveNode}/set_parameters`,
         'rcl_interfaces/srv/SetParameters',
         parameterRequest([
+          ['twist_mode', draft.twistMode, 'string'],
           ['twist_mode_switch_source', draft.driveModeBind.source, 'string'],
           ['twist_mode_switch_index', draft.driveModeBind.index, 'int'],
         ]),
@@ -356,6 +357,7 @@ export default function SettingsDialog({ open, onClose }) {
     draft.interpreterNode,
     draft.driveNode,
     draft.driveModeBind,
+    draft.twistMode,
   ]);
 
   const save = () => {
@@ -699,7 +701,20 @@ export default function SettingsDialog({ open, onClose }) {
                     <span className="muted">unbound</span>
                   )}
                 </span>
-                <span />
+                <span>
+                  {/* With no switch bound the mode is just a setting, so let it
+                      be set. While one is bound this picks what the node falls
+                      back to if that board stops reporting. */}
+                  <select
+                    value={draft.twistMode}
+                    onChange={(event) => setDraft((prev) => ({
+                      ...prev, twistMode: event.target.value,
+                    }))}
+                  >
+                    <option value="row">row</option>
+                    <option value="curvature">curvature</option>
+                  </select>
+                </span>
                 <span className="fn-actions">
                   <button
                     type="button"
