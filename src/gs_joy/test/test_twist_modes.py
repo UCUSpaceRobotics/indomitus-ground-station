@@ -12,7 +12,7 @@ import math
 
 import pytest
 
-from indomitus_rover_joy.twist_modes import (
+from gs_joy.twist_modes import (
     MODE_CURVATURE,
     MODE_ROW,
     apply_granny,

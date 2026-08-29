@@ -9,7 +9,7 @@ No ROS import anywhere in here — switch_bindings is deliberately standalone.
 
 import pytest
 
-from indomitus_rover_joy.switch_bindings import (
+from gs_joy.switch_bindings import (
     CUSTOM_KEY,
     KIND_SETBOOL,
     KIND_TRIGGER,

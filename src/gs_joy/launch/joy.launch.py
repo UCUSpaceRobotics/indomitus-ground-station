@@ -49,12 +49,12 @@ def generate_launch_description():
     # UI's settings dialog rewrites this file via ~/save_bindings, the same way
     # the arm-mapping page rewrites arm_bindings.yaml below.
     gs_bindings = os.path.join(
-        get_package_share_directory('indomitus_rover_joy'), 'config', 'gs_bindings.yaml')
+        get_package_share_directory('gs_joy'), 'config', 'gs_bindings.yaml')
 
     # Which console control fills which SDL gamepad slot for the arm. Shipped
     # defaults; the UI's arm-mapping page rewrites this file via save_bindings.
     arm_bindings = os.path.join(
-        get_package_share_directory('indomitus_rover_joy'), 'config', 'arm_bindings.yaml')
+        get_package_share_directory('gs_joy'), 'config', 'arm_bindings.yaml')
 
     return LaunchDescription([
         joy_board_port_arg,
@@ -66,7 +66,7 @@ def generate_launch_description():
         # the shared serial reader is what lets either board reconnect on its
         # own instead of needing a relaunch.
         Node(
-            package='indomitus_rover_joy',
+            package='gs_joy',
             executable='console_boards_node',
             name='console_boards',
             parameters=[{
@@ -91,7 +91,7 @@ def generate_launch_description():
             output='screen'
         ),
         Node(
-            package='indomitus_rover_joy',
+            package='gs_joy',
             executable='joy_to_cmd_vel_node',
             name='joy_to_cmd_vel_node',
             parameters=[{
@@ -120,7 +120,7 @@ def generate_launch_description():
             output='screen'
         ),
         Node(
-            package='indomitus_rover_joy',
+            package='gs_joy',
             executable='joy_to_servo_node',
             name='joy_to_servo_node',
             parameters=[{
@@ -149,7 +149,7 @@ def generate_launch_description():
         # carries the console's raw frame, which is a different layout
         # entirely. Point the rover's gamepad node at /arm/joy.
         Node(
-            package='indomitus_rover_joy',
+            package='gs_joy',
             executable='arm_gamepad_node',
             name='arm_gamepad',
             parameters=[arm_bindings, {
@@ -166,7 +166,7 @@ def generate_launch_description():
         # purpose: this one talks to services that may not answer, and must
         # never be able to delay a stop.
         Node(
-            package='indomitus_rover_joy',
+            package='gs_joy',
             executable='gs_interpreter_node',
             name='gs_interpreter',
             # The file twice over: once as a parameter file for its contents,

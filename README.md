@@ -24,7 +24,7 @@ docker compose exec indomitus_ground_station bash
 ### 3. Launch the Joystick Bridge
 Inside the container:
 ```bash
-ros2 launch indomitus_rover_joy joy.launch.py
+ros2 launch gs_joy joy.launch.py
 ```
 
 ## Configuration
@@ -48,7 +48,7 @@ to get stable `/dev/joy_board` and `/dev/button_board` symlinks.
 You can also override the ports directly when launching:
 
 ```bash
-ros2 launch indomitus_rover_joy joy.launch.py \
+ros2 launch gs_joy joy.launch.py \
     joy_board_port:=/dev/ttyUSB0 button_board_port:=/dev/ttyUSB1
 ```
 
@@ -126,7 +126,7 @@ so a typo cannot half-remap the arm — a button source on a stick slot, for
 instance, would publish a hard 0 or 1 as an axis value, which is full-speed arm
 motion from a toggle.
 
-Shipped defaults live in `src/indomitus_rover_joy/config/arm_bindings.yaml`.
+Shipped defaults live in `src/gs_joy/config/arm_bindings.yaml`.
 They are **placeholders**, exactly like `gs_bindings.yaml`: a plausible panel
 layout, not a measured one. Bind them against the real console before a run.
 
@@ -179,10 +179,10 @@ source install/setup.bash
 If you want to run nodes separately:
 
 ```bash
-ros2 run indomitus_rover_joy console_boards_node
-ros2 run indomitus_rover_joy arm_gamepad_node
-ros2 run indomitus_rover_joy joy_to_cmd_vel_node
-ros2 run indomitus_rover_joy joy_to_servo_node
+ros2 run gs_joy console_boards_node
+ros2 run gs_joy arm_gamepad_node
+ros2 run gs_joy joy_to_cmd_vel_node
+ros2 run gs_joy joy_to_servo_node
 ```
 
 ### Driving the Rover
@@ -247,7 +247,7 @@ off:
 ```bash
 docker compose up -d
 docker compose exec indomitus_ground_station bash
-ros2 launch indomitus_rover_bringup gs.launch.py use_joy:=false use_comms:=false
+ros2 launch gs_bringup gs.launch.py use_joy:=false use_comms:=false
 ```
 
 The UI itself runs on the host, not in the container:
@@ -262,7 +262,7 @@ See `ui/README.md` for configuration and `ui/COMMANDS.md` for the full command
 list.
 
 ## Project Structure
-- `src/indomitus_rover_joy`: ROS 2 package for joystick serial bridge and message conversion.
-- `src/indomitus_rover_bringup`: Top-level launch configurations.
+- `src/gs_joy`: ROS 2 package for joystick serial bridge and message conversion.
+- `src/gs_bringup`: Top-level launch configurations.
 - `docker/`: Dockerfile and entrypoint scripts.
 - `ui/`: React operator console (rosbridge + web_video_server).

@@ -6,7 +6,7 @@ from sensor_msgs.msg import Joy
 from std_msgs.msg import Int32MultiArray
 from geometry_msgs.msg import Twist
 
-from indomitus_rover_joy.twist_modes import (
+from gs_joy.twist_modes import (
     MODE_CURVATURE,
     MODE_ROW,
     MODES,

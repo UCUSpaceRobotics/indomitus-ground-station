@@ -11,7 +11,7 @@ Each block can be switched off, because on a laptop that is only meant to watch
 telemetry the serial boards are not plugged in and their nodes would spend the
 session logging open() failures:
 
-    ros2 launch indomitus_rover_bringup gs.launch.py use_joy:=false
+    ros2 launch gs_bringup gs.launch.py use_joy:=false
 
 Discovery is NOT this file's job. The rover is reached over a routed link and
 multicast SPDP does not cross the mast Pi, so the container points Fast DDS at
@@ -39,9 +39,9 @@ def generate_launch_description():
     video_port = LaunchConfiguration('video_port')
 
     joy_launch = os.path.join(
-        get_package_share_directory('indomitus_rover_joy'), 'launch', 'joy.launch.py')
+        get_package_share_directory('gs_joy'), 'launch', 'joy.launch.py')
     comms_launch = os.path.join(
-        get_package_share_directory('indomitus_rover_comms'), 'launch', 'comms.launch.py')
+        get_package_share_directory('gs_comms'), 'launch', 'comms.launch.py')
 
     return LaunchDescription([
         DeclareLaunchArgument(

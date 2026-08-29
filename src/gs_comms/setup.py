@@ -1,8 +1,9 @@
-from setuptools import find_packages, setup
 import os
 from glob import glob
 
-package_name = 'indomitus_rover_joy'
+from setuptools import find_packages, setup
+
+package_name = 'gs_comms'
 
 setup(
     name=package_name,
@@ -13,22 +14,18 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
-        (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
     maintainer='yurFitio',
     maintainer_email='fito.pn@ucu.edu.ua',
-    description='Serial joystick bridge for Indomitus Rover',
+    description='Ground-station link monitoring and Wi-Fi/LoRa failover for Indomitus Rover',
     license='MIT',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'console_boards_node = indomitus_rover_joy.console_boards_node:main',
-            'arm_gamepad_node = indomitus_rover_joy.arm_gamepad_node:main',
-            'joy_to_cmd_vel_node = indomitus_rover_joy.joy_to_cmd_vel_node:main',
-            'joy_to_servo_node = indomitus_rover_joy.joy_to_servo_node:main',
-            'gs_interpreter_node = indomitus_rover_joy.gs_interpreter_node:main'
+            'link_status_node = gs_comms.link_status_node:main',
+            'lora_gateway_node = gs_comms.lora_gateway_node:main',
         ],
     },
 )

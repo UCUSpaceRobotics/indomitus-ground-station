@@ -32,7 +32,7 @@ from sensor_msgs.msg import Joy
 from std_msgs.msg import Int32MultiArray
 from std_srvs.srv import Trigger
 
-from indomitus_rover_joy.arm_bindings import (
+from gs_joy.arm_bindings import (
     AXIS_KEYS,
     BUTTON_KEYS,
     SLOTS_BY_KEY,

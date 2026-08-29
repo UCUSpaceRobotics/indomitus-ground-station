@@ -44,7 +44,7 @@ from sensor_msgs.msg import Joy
 from std_msgs.msg import Int32MultiArray
 from std_srvs.srv import SetBool, Trigger
 
-from indomitus_rover_joy.switch_bindings import (
+from gs_joy.switch_bindings import (
     KIND_TRIGGER,
     SOURCE_JOY,
     SOURCE_SWITCHES,

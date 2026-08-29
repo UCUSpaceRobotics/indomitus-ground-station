@@ -9,7 +9,7 @@ No ROS import anywhere in here — arm_bindings is deliberately standalone.
 
 import pytest
 
-from indomitus_rover_joy.arm_bindings import (
+from gs_joy.arm_bindings import (
     AXIS_KEYS,
     BUTTON_KEYS,
     NUM_AXES,

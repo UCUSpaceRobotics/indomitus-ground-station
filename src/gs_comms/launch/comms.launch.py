@@ -38,7 +38,7 @@ def generate_launch_description():
 
         # Decides the path. Publishes /link/active_path, moves no traffic.
         Node(
-            package='indomitus_rover_comms',
+            package='gs_comms',
             executable='link_status_node',
             name='link_status_node',
             output='screen',
@@ -51,7 +51,7 @@ def generate_launch_description():
         # Acts on the decision. Relays /cmd_vel_ext over the radio while the
         # path is LORA, and republishes the radio's own metrics.
         Node(
-            package='indomitus_rover_comms',
+            package='gs_comms',
             executable='lora_gateway_node',
             name='lora_gateway_node',
             output='screen',
