@@ -4,6 +4,10 @@ This repository contains the ground station software for the Indomitus Rover, sp
 
 ## Quick Start
 
+```bash
+docker compose -f docker/docker-compose.gs.yaml --project-directory . up -d
+```
+
 ### 1. Build and Start the Container
 By default the system expects two ESP32s: the **joystick board** at
 `/dev/ttyACM0` and the **button board** at `/dev/ttyACM1`.
@@ -73,43 +77,91 @@ switch you want. Bindings persist in the browser. This is the point of the
 feature: both hands stay on the sticks while calibrating, no mouse needed.
 
 *Apply to node* pushes `axis_min` / `axis_center` / `axis_max` / `deadzone` to
-`serial_joy_node` over `rcl_interfaces/srv/SetParameters`; it takes effect
+`console_boards` over `rcl_interfaces/srv/SetParameters`; it takes effect
 immediately, no restart. *Save on rover* calls
-`/serial_joy_node/save_calibration` (`std_srvs/Trigger`), which writes
+`/console_boards/save_calibration` (`std_srvs/Trigger`), which writes
 `calibration_file` (default `/work/config/joy_calibration.yaml`, override with
 `JOY_CALIBRATION_FILE`). The node reloads that file on startup, so the sticks
 only need calibrating once.
 
-The file is written in `ros2 param` layout, so `ros2 param load /serial_joy_node
-joy_calibration.yaml` works too.
+The file is written in `ros2 param` layout, so `ros2 param load /console_boards
+joy_calibration.yaml` works too. A file saved before the two board nodes were
+merged is keyed `serial_joy_node`; it is still read, and rewritten under the
+new name the next time you save.
 
 The **centre deadzone** slider sets the fraction of travel that reads as zero.
 Travel outside it is rescaled to the full range, so there is no jump at the
 deadzone edge.
 
-### Hardware Protocol
-Both boards talk plain ASCII at 115200 baud.
+### Arm Mapping
 
-**Joystick board** (`microcontrollers_indomitus/esp32_switch+joy`) — one line
-every 20 ms:
+The arm is driven by `gamepad_servo_node` on the rover, which reads a **canonical
+SDL gamepad**: `axes[0..5]` and `buttons[0..14]`, where an index means the same
+physical control on every device. The console is not a gamepad — it is three
+sticks and two boards of switches in whatever order they were soldered — so
+`arm_gamepad_node` assembles that layout and publishes it on `/arm/joy`.
+
+It is a separate topic from `/joy` on purpose: `/joy` carries the console's own
+raw frame, which the drive nodes and the calibration wizard read, and it is a
+different layout entirely. Point the rover's gamepad node at this one:
+
+```bash
+ros2 launch arm_tasks gamepad.launch.py --ros-args -r joy:=/arm/joy
+```
+
+**Bind controls from the UI**, not by editing indices: open *Arm mapping* from
+the home page, press **Bind** on a row, then press the switch or move the stick
+you want. Each row's dot lights when the arm is seeing that control right now,
+which is the only real confirmation a binding took. *Apply to node* takes effect
+immediately with no restart; *Save on console* writes `arm_bindings_file`
+(default `/work/config/arm_bindings.yaml`, override with `ARM_BINDINGS_FILE`) so
+it survives one. Apply first — what gets saved is what was tested.
+
+A binding is one string per slot, `"<source>:<index>"` or
+`"<source>:<index>:inv"`, where the source is `joy` (the stick board's own 9
+switches), `switches` (the button board's 23) or `joy_axis` (the sticks). The
+`:inv` flag is for a switch wired so "on" reads 0, or a stick that pushes the
+wrong way. The node validates every binding and refuses a bad one with a reason,
+so a typo cannot half-remap the arm — a button source on a stick slot, for
+instance, would publish a hard 0 or 1 as an axis value, which is full-speed arm
+motion from a toggle.
+
+Shipped defaults live in `src/indomitus_rover_joy/config/arm_bindings.yaml`.
+They are **placeholders**, exactly like `gs_bindings.yaml`: a plausible panel
+layout, not a measured one. Bind them against the real console before a run.
+
+SDL button 6 (START) is deliberately not offered anywhere — the arm document
+marks its index as unverified on real hardware. Buttons 4, 5, 7, 8, 12 and 14 are
+absent for the opposite reason: the arm ignores them, so binding one would be a
+control that silently does nothing.
+
+With a bridge and the node running, `npm run check:arm` in `ui/` round-trips a
+mapping through rosbridge and puts it back as it found it.
+
+### Hardware Protocol
+Both boards talk plain ASCII, and both are read by a single node,
+`console_boards`, which owns one serial port per board.
+
+**Joystick board** (`microcontrollers_indomitus/esp32_switch+joy`) — 921600
+baud, one line every 5 ms (`POLL_INTERVAL_MS` in its firmware):
 
 ```
 110110011|498|501|500|512|499|503
 ```
 
 9 switch bits (PCF8575 @ 0x24), then 6 axes as `0..1000` in the order
-J0X, J0Y, J1X, J1Y, J2X, J2Y. `serial_joy_node` normalizes each axis to
+J0X, J0Y, J1X, J1Y, J2X, J2Y. `console_boards` normalizes each axis to
 `-1.0 .. 1.0` around 500 and publishes `sensor_msgs/Joy` on `/joy`, with the
 9 switches carried in `Joy.buttons`.
 
-**Button board** (`microcontrollers_indomitus/esp_32_switches+buttons`) — 23
-bits, `1 = pressed`, sent **only when the debounced state changes**:
+**Button board** (`microcontrollers_indomitus/esp_32_switches+buttons`) — 115200
+baud, 23 bits, `1 = pressed`, sent **only when the debounced state changes**:
 
 ```
 00000000000000000000000
 ```
 
-`switch_reader_node` latches that state and republishes it at 10 Hz on
+`console_boards` latches that state and republishes it at 10 Hz on
 `/switches` (`std_msgs/Int32MultiArray`) so the UI does not mark it stale
 between presses.
 
@@ -127,8 +179,8 @@ source install/setup.bash
 If you want to run nodes separately:
 
 ```bash
-ros2 run indomitus_rover_joy serial_joy_node
-ros2 run indomitus_rover_joy switch_reader_node
+ros2 run indomitus_rover_joy console_boards_node
+ros2 run indomitus_rover_joy arm_gamepad_node
 ros2 run indomitus_rover_joy joy_to_cmd_vel_node
 ros2 run indomitus_rover_joy joy_to_servo_node
 ```
@@ -186,9 +238,6 @@ telemetry, joystick command path and the rover log. It talks to ROS over
 Both are started by `gs.launch.py`, together with the serial boards and the mast
 link, so on the console there is nothing to start by hand:
 
-```bash
-docker compose -f docker/docker-compose.gs.yaml --project-directory . up -d
-```
 
 The root `docker-compose.yml` is the development counterpart: same image and
 same environment, but it launches nothing and leaves you a shell. Start pieces

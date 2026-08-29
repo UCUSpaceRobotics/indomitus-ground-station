@@ -10,9 +10,11 @@
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "preview": "vite preview",
-    "check": "npm run lint && node scripts/smoke-render.mjs",
+    "check": "npm run lint && node scripts/smoke-render.mjs && node scripts/check-function-binds.mjs",
     "check:render": "node scripts/smoke-render.mjs",
-    "check:bridge": "node scripts/check-connection.mjs"
+    "check:bridge": "node scripts/check-connection.mjs",
+    "check:arm": "node scripts/check-arm-mapping.mjs",
+    "check:binds": "node scripts/check-function-binds.mjs"
   },
   "dependencies": {
     "lucide-react": "^1.25.0",

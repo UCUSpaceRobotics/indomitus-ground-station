@@ -1,0 +1,73 @@
+# Which console control drives which arm function.
+#
+# The arm's gamepad_servo_node reads a canonical SDL gamepad: axes[0..5] and
+# buttons[0..14], where an index means the same physical control on every
+# device. arm_gamepad_node builds that layout out of the console's two boards,
+# and this file says which console control fills each slot.
+#
+# Value format:  "<source>:<index>"  or  "<source>:<index>:inv"  or  "" (unbound)
+#
+#   joy        the joystick board's own 9 switches, in Joy.buttons
+#   switches   the button board's 23 switches, on /switches
+#   joy_axis   the joystick board's 6 analogue axes, in Joy.axes
+#   :inv       this control reads backwards — a switch wired so "on" is 0, or a
+#              stick that pushes the wrong way
+#
+# Nothing here needs editing by hand. The UI's *Arm mapping* page binds a slot
+# by asking the operator to press the control they want, writes the result over
+# rcl_interfaces/SetParameters, and persists it with /arm_gamepad/save_bindings
+# — which rewrites this file. Editing it by hand still works, and is the way to
+# ship a known-good panel layout with the repo.
+#
+# NOTE: joy[0] is the drive/arm mode switch that joy_to_cmd_vel_node and
+# joy_to_servo_node both read. Do not bind it here.
+#
+# MEASURED CONSOLE LAYOUT (probed on 2026-08-27 against the real panel, by
+# turning every control on and seeing which ones stayed on):
+#
+#   /switches  latching:       0-8, 10, 11, 12, 13, 14, 17, 22
+#   /switches  self-resetting: 9, 15, 16, 18, 19, 20, 21
+#   joy        latching:       0-8 (all of them; joy[0] is the drive/arm mode)
+#
+# Every arm control here wants a self-resetting button. The six press-once
+# functions do because the arm acts on the rising edge and a toggle would have to
+# be flipped back before it could fire again; push boost does because a boost
+# left latched on is an arm moving at x3 that nobody asked to move.
+#
+# There are seven such buttons and eight arm controls, so exactly one has to sit
+# on a toggle. It is `shift`, deliberately: it is the only one whose effect is a
+# mode rather than an action, it is the least dangerous to leave on, and on the
+# stick board it falls under the hand already steering.
+#
+# What else holds a control: switches 0-7 are camera selection (DEFAULT_CAMERAS
+# in the UI), switches 8, 10, 11, 12 are rover functions (gs_bindings.yaml), and
+# joy 0 is the mode switch. The UI flags a control bound to two things, but does
+# not refuse it — one switch driving two functions is occasionally deliberate.
+#
+# SDL button 6 (START) is deliberately not offered at all — the arm document
+# marks its index as unverified on real hardware.
+arm_gamepad:
+  ros__parameters:
+    # ── sticks ───────────────────────────────────────────────────────────────
+    # Console J0 becomes the arm's left stick (translation in the camera's
+    # frame), J1 becomes the right stick (orientation, or up/down). That mirrors
+    # joy_to_servo_node's existing axis choice, so the sticks do not swap
+    # meaning when the operator moves between driving and the arm.
+    bind.left_x: joy_axis:0      # move left/right (view Y)
+    bind.left_y: joy_axis:1      # move forward/back (view X)
+    bind.right_x: joy_axis:2     # yaw, or roll while shift is held
+    bind.right_y: joy_axis:3     # up/down, or pitch while shift is held
+
+    # ── buttons ──────────────────────────────────────────────────────────────
+    # The console's seven self-resetting buttons, in panel order.
+    bind.safe_pose: switches:9        # A  — home pose + start servo
+    bind.sampling_home: switches:15   # B  — sampling home (drill_sampling only)
+    bind.astrobio_home: switches:16   # X  — astrobio home
+    bind.drill_home: switches:18      # Y  — drill home (drill_sampling only)
+    bind.gripper_open: switches:19    # D-Pad up   — open gripper / drill
+    bind.gripper_close: switches:20   # D-Pad left — close gripper / undrill
+    bind.push_boost: switches:21      # LB — hold for x3 speed
+
+    # The one that has to be a toggle; see the header. Flipped on for pitch/roll
+    # work and back off after, rather than held.
+    bind.shift: joy:1                 # RB — right stick becomes pitch/roll

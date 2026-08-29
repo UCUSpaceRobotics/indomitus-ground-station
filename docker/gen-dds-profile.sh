@@ -111,6 +111,20 @@ PEER="${ROVER_PEER:-10.42.0.1}"
 # explicitly-ported locator below.
 PEER_RANGE="${ROVER_PEER_RANGE:-50}"
 DOMAIN="${ROS_DOMAIN_ID:-90}"
+# Extra local addresses to whitelist alongside the rover link, space or comma
+# separated. Empty by default: the whitelist exists to stop Fast DDS announcing
+# locators the rover cannot route to, so widening it is always a deliberate act.
+#
+# Use it when a second segment must also carry ROS traffic — e.g. a Jetson on
+# the campus LAN that the rover path does not reach:
+#
+#   DDS_EXTRA_ADDRS=10.20.18.46 ./docker/gen-dds-profile.sh
+#
+# Cost of adding one: the GS then announces locators on that interface too, and
+# the rover will try and fail them before falling back to the link address.
+# Discovery still completes, but it is slower and noisier — so list only
+# addresses that a peer you actually care about can reach.
+EXTRA_ADDRS="${DDS_EXTRA_ADDRS:-}"
 OUT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fastdds_rover_link.xml"
 
 # RTPS well-known port for SPDP multicast: PB + DG*domainId + d0,
@@ -134,6 +148,18 @@ rover_peer_locators() {
               </udpv4>
             </locator>
 LOC
+    done
+}
+
+# Renders DDS_EXTRA_ADDRS as whitelist entries. Accepts commas or spaces, drops
+# blanks, and emits nothing at all when the variable is empty — an empty
+# <address></address> element is not ignored by Fast DDS, it matches no
+# interface and takes the whole transport down with it.
+extra_addr_elements() {
+    local a
+    for a in ${EXTRA_ADDRS//,/ }; do
+        [ -n "$a" ] || continue
+        printf '          <address>%s</address>\n' "$a"
     done
 }
 
@@ -194,6 +220,7 @@ cat > "$OUT" <<EOF
   Mode:               linked (rover link present)
   Rover link address: $LINK_IP (matched prefix $LINK_PREFIX)
   Discovery peers:    $MCAST_ADDR:$MCAST_PORT (local, domain $DOMAIN), $PEER (rover)
+  Extra whitelisted:  ${EXTRA_ADDRS:-none (set DDS_EXTRA_ADDRS to widen)}
   Rover peer locators: participant IDs 0..$((PEER_RANGE - 1)), explicit ports
 
   Restricts UDP to the rover link so Fast DDS stops announcing locators the
@@ -211,6 +238,7 @@ cat > "$OUT" <<EOF
           <address>$LINK_IP</address>
           <!-- Loopback is not optional; see gen-dds-profile.sh. -->
           <address>127.0.0.1</address>
+$(extra_addr_elements)
         </interfaceWhiteList>
       </transport_descriptor>
       <transport_descriptor>

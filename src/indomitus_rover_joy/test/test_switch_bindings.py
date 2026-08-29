@@ -10,11 +10,16 @@ No ROS import anywhere in here — switch_bindings is deliberately standalone.
 import pytest
 
 from indomitus_rover_joy.switch_bindings import (
+    CUSTOM_KEY,
+    KIND_SETBOOL,
+    KIND_TRIGGER,
     SOURCE_JOY,
     SOURCE_SWITCHES,
     Binding,
     EdgeTracker,
+    binds_from_specs,
     build_bindings,
+    specs_from_binds,
 )
 
 
@@ -164,3 +169,84 @@ def test_a_bad_spec_is_rejected_and_names_the_binding(spec, wrong):
     # indistinguishable from a broken rover. Fail loudly at startup instead.
     with pytest.raises(ValueError, match='drive_power'):
         build_bindings({'drive_power': spec})
+
+
+# ── the runtime binding list the settings dialog writes ──────────────────────
+
+def test_a_latching_switch_gets_the_absolute_service():
+    binds = binds_from_specs([
+        {'function': 'drive_power', 'source': SOURCE_SWITCHES, 'index': 0}])
+    assert binds[0].service == '/drive/power'
+    assert binds[0].kind == KIND_SETBOOL
+
+
+def test_a_momentary_button_gets_the_toggle_twin():
+    # A button has no position to send, so SetBool would undo it on release.
+    binds = binds_from_specs([
+        {'function': 'drive_power', 'source': SOURCE_JOY, 'index': 3}])
+    assert binds[0].service == '/drive/power/toggle'
+    assert binds[0].kind == KIND_TRIGGER
+
+
+def test_a_function_with_no_absolute_form_is_edge_fired_from_either_source():
+    # Clearing a fault is an action; there is no "off" position to hold.
+    for source in (SOURCE_JOY, SOURCE_SWITCHES):
+        binds = binds_from_specs([
+            {'function': 'drive_clear_errors', 'source': source, 'index': 1}])
+        assert binds[0].service == '/drive/clear_errors'
+        assert binds[0].kind == KIND_TRIGGER
+
+
+def test_a_control_cannot_drive_two_functions():
+    with pytest.raises(ValueError, match='already used'):
+        binds_from_specs([
+            {'function': 'drive_power', 'source': SOURCE_SWITCHES, 'index': 0},
+            {'function': 'spotlight', 'source': SOURCE_SWITCHES, 'index': 0},
+        ])
+
+
+def test_a_switch_already_driving_a_camera_is_refused():
+    with pytest.raises(ValueError, match='already used'):
+        binds_from_specs(
+            [{'function': 'drive_power', 'source': SOURCE_SWITCHES, 'index': 4}],
+            claimed=[(SOURCE_SWITCHES, 4)])
+
+
+def test_the_same_index_on_two_sources_is_not_a_clash():
+    binds = binds_from_specs([
+        {'function': 'drive_power', 'source': SOURCE_SWITCHES, 'index': 2},
+        {'function': 'spotlight', 'source': SOURCE_JOY, 'index': 2},
+    ])
+    assert len(binds) == 2
+
+
+def test_an_unknown_function_is_named_in_the_error():
+    with pytest.raises(ValueError, match='nonsense'):
+        binds_from_specs([
+            {'function': 'nonsense', 'source': SOURCE_SWITCHES, 'index': 0}])
+
+
+def test_a_custom_bind_needs_its_own_service():
+    with pytest.raises(ValueError, match='custom'):
+        binds_from_specs([
+            {'function': CUSTOM_KEY, 'source': SOURCE_SWITCHES, 'index': 0}])
+
+    binds = binds_from_specs([{
+        'function': CUSTOM_KEY, 'source': SOURCE_SWITCHES,
+        'index': 0, 'service': '/science/pump'}])
+    assert binds[0].service == '/science/pump'
+
+
+def test_specs_survive_a_round_trip():
+    specs = [
+        {'function': 'drive_power', 'source': SOURCE_SWITCHES, 'index': 0, 'invert': True},
+        {'function': 'drive_clear_errors', 'source': SOURCE_JOY, 'index': 5, 'invert': False},
+    ]
+    assert specs_from_binds(binds_from_specs(specs)) == specs
+
+
+def test_invert_still_reaches_the_binding():
+    binds = binds_from_specs([{
+        'function': 'drive_power', 'source': SOURCE_SWITCHES,
+        'index': 0, 'invert': True}])
+    assert binds[0].desired(0) is True and binds[0].desired(1) is False

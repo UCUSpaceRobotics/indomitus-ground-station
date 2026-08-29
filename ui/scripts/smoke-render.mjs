@@ -74,11 +74,23 @@ function installDom(hash) {
 }
 
 const ROUTES = [
-  ['#/', ['Indomitus Ground Station', 'Left monitor', 'Right monitor', 'Keyboard']],
-  ['#/left', ['Telemetry', 'Command path', 'Control box', 'Rover log', 'Ground speed']],
+  ['#/', ['Indomitus Ground Station', 'Left monitor', 'Right monitor', 'Keyboard',
+    // The settings dialog is always in the DOM, so its function list is
+    // covered here: every rover function must be listed whether bound or not.
+    'Rover functions', 'Drive power', 'Spotlight', 'Custom services',
+    'Console modes', 'Steering mode']],
+  // Both console boards are listed, including the stick board's own switches,
+  // which arrive in Joy.buttons rather than on /switches.
+  ['#/left', ['Telemetry', 'Command path', 'Control box', 'Button board', 'Joystick board',
+    'drive / arm mode', 'Rover log', 'Ground speed']],
   ['#/right', ['Camera wall', 'feeds', 'Focus', 'Grid']],
-  ['#/cam/cam1', ['Front Navigation', '/zed2i/rgb/image_rect_color']],
+  // cam1 is a Nano feed: an absolute MJPEG URL rather than a ROS topic, which
+  // the full-screen route prints under the "No signal" overlay when the camera
+  // is not reachable from wherever this is running. See "Cameras outside ROS".
+  ['#/cam/cam1', ['Nano Camera 1', 'http://10.42.0.1:8090']],
   ['#/calibrate', ['Stick calibration', 'Hold X at maximum', 'Centre deadzone', 'Panel buttons']],
+  ['#/arm-mapping', ['Arm mapping', 'Home pose + start servo', 'Astrobio home', 'Open gripper',
+    'Sticks']],
   ['#/nope', []], // redirect resolves client-side; here it just must not throw
 ];
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CameraOff, Image as ImageIcon, RefreshCw, Radio, RotateCw } from 'lucide-react';
-import { VIDEO_MODES, mjpegUrl, placeholderFor, snapshotUrl, useConfig } from '../config';
+import { VIDEO_MODES, isDirectUrl, mjpegUrl, placeholderFor, snapshotUrl, useConfig } from '../config';
 import { useTopic, useTick, isStale } from '../ros/useTopic';
 import { fmtAge, fmtNumber, stampToMs } from '../lib/format';
 import { rotateCamera, useRotation } from '../lib/rotation';
@@ -11,6 +11,16 @@ const SNAPSHOT_INTERVAL_MS = 2000;
 
 function retryDelay(attempt) {
   return Math.min(RETRY_BASE_MS * 2 ** Math.max(0, attempt - 1), RETRY_MAX_MS);
+}
+
+/**
+ * Appends the cache-buster. web_video_server URLs always carry a query, but a
+ * direct MJPEG source may not (`http://10.42.0.1:8080/stream`), and a bare `&`
+ * there produces a path no server answers — which reads in the UI as a camera
+ * that never recovers from its first retry.
+ */
+function bust(src, nonce) {
+  return `${src}${src.includes('?') ? '&' : '?'}_r=${nonce}`;
 }
 
 /**
@@ -50,7 +60,7 @@ function MjpegImage({ src, alt, onStatus }) {
     img.addEventListener('error', handleError);
     // The cache-buster doubles as the retry trigger: a fresh URL forces a new
     // connection instead of letting the browser replay a dead one.
-    img.src = nonce === 0 ? src : `${src}&_r=${nonce}`;
+    img.src = nonce === 0 ? src : bust(src, nonce);
 
     return () => {
       closed = true;
@@ -78,7 +88,7 @@ function SnapshotImage({ src, alt, onStatus }) {
     <img
       className="feed-img"
       alt={alt}
-      src={`${src}&_r=${nonce}`}
+      src={bust(src, nonce)}
       onLoad={() => onStatus('live')}
       onError={() => onStatus('error')}
     />
@@ -103,7 +113,11 @@ function SnapshotImage({ src, alt, onStatus }) {
 export default function CameraFeed({ camera, variant = 'main', className = '' }) {
   const config = useConfig();
   const isThumb = variant === 'thumb';
-  const rosMode = config.videoMode === VIDEO_MODES.ros;
+  // A direct MJPEG URL has no ROS topic behind it, so `ros` transport cannot
+  // serve it. Fall back to HTTP for that camera rather than showing "No signal"
+  // on a feed that is actually up.
+  const direct = isDirectUrl(camera.topic);
+  const rosMode = config.videoMode === VIDEO_MODES.ros && !direct;
 
   const [httpStatus, setHttpStatus] = useState('connecting');
   const [reloadKey, setReloadKey] = useState(0);

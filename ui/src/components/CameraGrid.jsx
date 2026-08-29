@@ -32,7 +32,7 @@ function isTypingTarget(target) {
 
 /**
  * Camera pane driven by the physical toggle switches on the control box
- * (`/switches`, published by switch_reader_node).
+ * (`/switches`, published by console_boards).
  *
  * Switch handling is deliberately fail-open: until the switch box publishes
  * anything, every camera is shown. An operator can also ignore the switches

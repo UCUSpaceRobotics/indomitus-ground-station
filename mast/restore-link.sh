@@ -30,6 +30,7 @@ DRY=0
 
 PI_ALFA=wlx00c0caba8237
 ROVER_ALFA=wlx00c0caba86c1
+GS_MAST_IF=eno1
 SSH="ssh -o BatchMode=yes -o ConnectTimeout=8"
 ROVER=""
 
@@ -233,31 +234,51 @@ EOF
 
 # ==================================================================== GS PC ===
 
+# Idempotent autoconnect setter. The old version announced "changed" even when
+# nmcli failed, which is how a deleted rover-recovery still reported success.
+set_autoconnect() {
+    local con=$1 want=$2 cur
+    cur=$(nmcli -t -f connection.autoconnect con show "$con" 2>/dev/null | cut -d: -f2)
+    if [ -z "$cur" ]; then
+        say "!! no such connection: $con"
+        return 1
+    fi
+    if [ "$cur" = "$want" ]; then
+        ok "$con autoconnect already $want"
+        return 0
+    fi
+    if [ "$DRY" = 1 ]; then
+        say "[dry] gs: nmcli con modify $con connection.autoconnect $want"
+        return 0
+    fi
+    if nmcli con modify "$con" connection.autoconnect "$want"; then
+        did "$con autoconnect $want"
+    else
+        say "!! failed to set $con autoconnect $want"
+        return 1
+    fi
+}
+
 restore_gs() {
     head_ "GS PC"
 
-    # gs-mast has no bound device; with autoconnect on it grabs eno1 and assigns
-    # a DUPLICATE 10.44.0.10 at a lower metric than enp2s0, so traffic for the Pi
-    # goes out the rover's cable and the mast becomes unreachable.
-    if [ "$(nmcli -t -f NAME,AUTOCONNECT con show 2>/dev/null | awk -F: '$1=="gs-mast"{print $2}')" = "yes" ]; then
-        [ "$DRY" = 0 ] && nmcli con modify gs-mast connection.autoconnect no
-        did "gs-mast autoconnect off"
-    else
-        ok "gs-mast autoconnect already off"
-    fi
-    if [ "$(nmcli -t -f NAME,AUTOCONNECT con show 2>/dev/null | awk -F: '$1=="rover-recovery"{print $2}')" != "yes" ]; then
-        [ "$DRY" = 0 ] && nmcli con modify rover-recovery connection.autoconnect yes
-        did "rover-recovery autoconnect on"
-    else
-        ok "rover-recovery autoconnect already on"
-    fi
+    # Exactly one ethernet profile may autoconnect. Both gs-mast and gs-mast-p2
+    # carry 10.44.0.10/24, so if they come up together the Pi is reachable by
+    # whichever cable won the metric, which is not always the one you plugged.
+    #
+    # gs-mast (eno1) is the one that must win. gs-mast-p2 (enp2s0) is a trap: the
+    # port links and negotiates 1000Mb/s but its receive path is dead, so ARP for
+    # the Pi goes out and nothing ever comes back. It looks healthy and drops
+    # everything. The mast cable belongs in eno1.
+    set_autoconnect gs-mast    yes
+    set_autoconnect gs-mast-p2 no
 
     # EEE on the GS transmit path costs 514 vs 887 Mbit/s to the Pi. Needs root
     # here, which this script does not assume it has.
-    if [ "$(ethtool --show-eee enp2s0 2>/dev/null | awk '/EEE status/{print $3}')" != "disabled" ]; then
-        say "!! run yourself:  sudo ethtool --set-eee enp2s0 eee off   (514 -> 887 Mbit/s)"
+    if [ "$(ethtool --show-eee "$GS_MAST_IF" 2>/dev/null | awk '/EEE status/{print $3}')" != "disabled" ]; then
+        say "!! run yourself:  sudo ethtool --set-eee $GS_MAST_IF eee off   (514 -> 887 Mbit/s)"
     else
-        ok "enp2s0 EEE disabled"
+        ok "$GS_MAST_IF EEE disabled"
     fi
 
     # Video must not go over rosbridge — it base64s each frame into JSON and the
