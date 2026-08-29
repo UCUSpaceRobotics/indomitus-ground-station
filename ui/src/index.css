@@ -1621,6 +1621,83 @@ kbd {
   opacity: 0.55;
 }
 
+/* Custom-service rows keep the old five-column shape; the catalogue above is
+   its own grid. */
+.bind-table-row.is-custom {
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) 72px 64px 32px;
+}
+
+/* ── Rover functions, function-first ───────────────────────────────────── */
+
+.fn-table {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 10px;
+}
+
+.fn-table-head,
+.fn-table-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.5fr) minmax(0, 1.4fr) 64px 84px;
+  gap: 6px;
+  align-items: center;
+}
+
+.fn-table-head {
+  font-size: 11px;
+  color: var(--text-faint);
+  padding: 0 2px;
+}
+
+/* The whole point of the rewrite: an unbound function stays on the list and
+   says so, instead of being a row that was never added. */
+.fn-table-row.is-unbound .fn-name,
+.fn-table-row.is-unbound .bind-call {
+  opacity: 0.6;
+}
+
+.fn-group {
+  font-size: 11px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 8px 2px 1px;
+}
+
+.fn-name {
+  font-size: 12.5px;
+}
+
+.fn-bound {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.fn-bound input[type='number'] {
+  width: 56px;
+}
+
+.fn-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+@media (max-width: 720px) {
+  .fn-table-head {
+    display: none;
+  }
+  .fn-table-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 44px 84px;
+  }
+  .fn-table-row .bind-call {
+    display: none;
+  }
+}
+
 .bind-call {
   font-size: 12px;
   display: flex;

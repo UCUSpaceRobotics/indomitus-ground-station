@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { Plus, RotateCcw, Trash2, Search } from 'lucide-react';
 import {
   DEFAULT_CAMERAS,
@@ -18,6 +18,7 @@ import {
   SOURCE_SWITCHES,
   resolveCall,
 } from '../lib/roverFunctions';
+import { usePanelButtons } from '../hooks/usePanelButtons';
 
 /** An index below zero is a bind whose control was taken by something else. */
 const UNBOUND = -1;
@@ -188,13 +189,79 @@ export default function SettingsDialog({ open, onClose }) {
         ...prev.functionBinds,
         {
           id: `bind${Date.now().toString(36)}`,
-          function: 'drive_power',
+          // The catalogue functions are always listed on their own, so the only
+          // thing left to add by hand is a service this build does not know.
+          function: CUSTOM_KEY,
+          service: '',
           source: SOURCE_SWITCHES,
           index: UNBOUND,
           invert: false,
         },
       ],
     }));
+
+  // ── function-first binding ────────────────────────────────────────────
+  //
+  // The catalogue is the list, not the rows: every rover function is always
+  // on screen with its control beside it, bound or not. The previous shape —
+  // add a row, then hunt the function out of a dropdown — made the common
+  // question ("is the spotlight wired to anything?") unanswerable without
+  // opening every row.
+  const bindFor = (key) => draft.functionBinds.find((b) => b.function === key);
+
+  const upsertFunctionBind = (key, patch) => {
+    const existing = draft.functionBinds.findIndex((b) => b.function === key);
+    if (existing >= 0) {
+      patchBind(existing, patch);
+      return;
+    }
+    const bind = {
+      id: `bind${Date.now().toString(36)}`,
+      function: key,
+      source: SOURCE_SWITCHES,
+      index: UNBOUND,
+      invert: false,
+      ...patch,
+    };
+    if (bind.index >= 0) claimControl(bind.source, bind.index, -1);
+    setDraft((prev) => ({ ...prev, functionBinds: [...prev.functionBinds, bind] }));
+  };
+
+  /**
+   * Unbinding drops the row rather than parking it at -1.
+   *
+   * A catalogue function needs no row to be listed, so an unbound one would be
+   * a row that exists only to say "nothing", and those are what the warning
+   * about incomplete binds was counting.
+   */
+  const clearFunctionBind = (key) =>
+    setDraft((prev) => ({
+      ...prev,
+      functionBinds: prev.functionBinds.filter((b) => b.function !== key),
+    }));
+
+  // Press-to-bind, the same gesture as the arm mapping page. While a function
+  // is learning, the next control that moves claims it.
+  const [learning, setLearning] = useState(null);
+
+  const onPanelButton = useCallback(
+    (button) => {
+      if (!open || !learning) return;
+      upsertFunctionBind(learning, { source: button.source, index: button.index });
+      setLearning(null);
+    },
+    // upsertFunctionBind closes over draft, which changes on every edit; the
+    // handler is held in a ref inside the hook, so listing it would only churn.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [open, learning, draft.functionBinds],
+  );
+
+  usePanelButtons(onPanelButton);
+
+  /** Hand-named services, kept with their real index so edits still address them. */
+  const customBinds = draft.functionBinds
+    .map((bind, index) => ({ bind, index }))
+    .filter(({ bind }) => bind.function === CUSTOM_KEY);
 
   /** Binds that are actually wired and complete enough to send. */
   const liveBinds = draft.functionBinds.filter(
@@ -364,7 +431,7 @@ export default function SettingsDialog({ open, onClose }) {
             <div className="camera-table">
               <div className="camera-table-head">
                 <span>Name</span>
-                <span>Image topic</span>
+                <span>Image topic / URL</span>
                 <span>Switch</span>
                 <span>Monitor</span>
                 <span />
@@ -415,15 +482,20 @@ export default function SettingsDialog({ open, onClose }) {
               feed, matching the toggle order in <span className="mono">console_boards</span>.
               Camera rows are saved as you edit them — Cancel does not undo them.
             </p>
+            <p className="field-hint">
+              A row may hold an absolute{' '}
+              <span className="mono">http://host:port/…</span> MJPEG URL instead of a topic. The
+              browser then reads that source directly, bypassing ROS and{' '}
+              <span className="mono">web_video_server</span> — for a camera on a machine that
+              cannot run Humble. Such a feed has no timestamps, so it stays on HTTP even when the
+              transport above is set to <span className="mono">ros</span>.
+            </p>
           </section>
 
           <section>
             <div className="settings-subhead">
               <h3>Rover functions</h3>
               <div className="settings-subhead-actions">
-                <button type="button" className="btn btn-sm" onClick={addBind}>
-                  <Plus size={13} /> Add
-                </button>
                 <button
                   type="button"
                   className="btn btn-sm"
@@ -436,108 +508,188 @@ export default function SettingsDialog({ open, onClose }) {
               </div>
             </div>
             <p className="field-hint">
-              A latching switch sends its position as <span className="mono">SetBool</span>; a
-              joystick button has no position and fires the <span className="mono">Trigger</span>
-              {' '}twin instead. Binding a control here releases it from whichever camera or
-              function held it before.
+              Every function the console can reach, with the control that drives it. Press{' '}
+              <strong>Bind</strong>, then move the switch you want — or type its index. A latching
+              switch sends its position as <span className="mono">SetBool</span>; a joystick button
+              has no position and fires the <span className="mono">Trigger</span> twin instead.
+              Claiming a control releases it from whichever camera or function held it before.
             </p>
+            {learning && (
+              <p className="field-hint is-warn">
+                Waiting for a control. Whatever you move is still wired to the rover right now, so
+                it will also do whatever it is currently bound to.
+              </p>
+            )}
             {bindStatus && (
               <p className={`field-hint is-${bindStatus.tone}`}>{bindStatus.text}</p>
             )}
 
-            <div className="bind-table">
-              <div className="bind-table-head">
+            <div className="fn-table">
+              <div className="fn-table-head">
                 <span>Function</span>
-                <span>Source</span>
-                <span>Index</span>
                 <span>Calls</span>
+                <span>Bound to</span>
                 <span>Inverted</span>
                 <span />
               </div>
-              {draft.functionBinds.map((bind, index) => {
-                const call = resolveCall(bind);
-                const unbound = bind.index < 0;
-                return (
-                  <div
-                    className={`bind-table-row ${unbound ? 'is-unbound' : ''}`}
-                    key={bind.id || index}
-                  >
-                    <select
-                      value={bind.function}
-                      onChange={(event) => patchBind(index, { function: event.target.value })}
+
+              {FUNCTION_GROUPS.map((group) => (
+                <Fragment key={group.label}>
+                  <div className="fn-group">{group.label}</div>
+                  {group.items.map((fn) => {
+                    const bind = bindFor(fn.key);
+                    const bound = Boolean(bind) && bind.index >= 0;
+                    const call = resolveCall(bind || { function: fn.key, source: SOURCE_SWITCHES });
+                    const isLearning = learning === fn.key;
+                    return (
+                      <div
+                        className={`fn-table-row ${bound ? '' : 'is-unbound'}`}
+                        key={fn.key}
+                      >
+                        <span className="fn-name">{fn.label}</span>
+
+                        <span className="mono muted bind-call">
+                          {call.service || '—'}
+                          {call.kind && <em className="bind-kind">{call.kind}</em>}
+                        </span>
+
+                        <span className="fn-bound">
+                          {isLearning ? (
+                            <span className="chip is-warn">move a control…</span>
+                          ) : bound ? (
+                            <>
+                              <select
+                                value={bind.source}
+                                onChange={(event) =>
+                                  upsertFunctionBind(fn.key, { source: event.target.value })
+                                }
+                              >
+                                <option value={SOURCE_SWITCHES}>Panel switch</option>
+                                <option value={SOURCE_JOY}>Joystick button</option>
+                              </select>
+                              <input
+                                type="number"
+                                min={0}
+                                max={SOURCE_LIMITS[bind.source] - 1}
+                                value={bind.index}
+                                onChange={(event) =>
+                                  upsertFunctionBind(fn.key, {
+                                    index: Number(event.target.value),
+                                  })
+                                }
+                              />
+                            </>
+                          ) : (
+                            <span className="muted">unbound</span>
+                          )}
+                        </span>
+
+                        <input
+                          type="checkbox"
+                          checked={Boolean(bind?.invert)}
+                          // A Trigger has no position, so there is nothing to invert.
+                          disabled={!bound || call.kind === 'trigger'}
+                          onChange={(event) =>
+                            upsertFunctionBind(fn.key, { invert: event.target.checked })
+                          }
+                        />
+
+                        <span className="fn-actions">
+                          <button
+                            type="button"
+                            className={`btn btn-sm ${isLearning ? 'is-active' : ''}`}
+                            onClick={() => setLearning(isLearning ? null : fn.key)}
+                          >
+                            {isLearning ? 'Cancel' : 'Bind'}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            disabled={!bind}
+                            onClick={() => clearFunctionBind(fn.key)}
+                            title="Unbind"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </span>
+                      </div>
+                    );
+                  })}
+                </Fragment>
+              ))}
+            </div>
+
+            <div className="settings-subhead">
+              <h4>Custom services</h4>
+              <div className="settings-subhead-actions">
+                <button type="button" className="btn btn-sm" onClick={addBind}>
+                  <Plus size={13} /> Add
+                </button>
+              </div>
+            </div>
+            <p className="field-hint">
+              For anything not in the catalogue above. These are named by hand, so they are the one
+              place a typo reaches the rover as a service that simply never answers.
+            </p>
+
+            {customBinds.length === 0 ? (
+              <p className="field-hint">None.</p>
+            ) : (
+              <div className="bind-table">
+                {customBinds.map(({ bind, index }) => {
+                  const call = resolveCall(bind);
+                  const unbound = bind.index < 0;
+                  return (
+                    <div
+                      className={`bind-table-row is-custom ${unbound ? 'is-unbound' : ''}`}
+                      key={bind.id || index}
                     >
-                      {FUNCTION_GROUPS.map((group) => (
-                        <optgroup key={group.label} label={group.label}>
-                          {group.items.map((fn) => (
-                            <option key={fn.key} value={fn.key}>
-                              {fn.label}
-                            </option>
-                          ))}
-                        </optgroup>
-                      ))}
-                      <option value={CUSTOM_KEY}>Custom service…</option>
-                    </select>
-
-                    <select
-                      value={bind.source}
-                      onChange={(event) => patchBind(index, { source: event.target.value })}
-                    >
-                      <option value={SOURCE_SWITCHES}>Panel switch</option>
-                      <option value={SOURCE_JOY}>Joystick button</option>
-                    </select>
-
-                    <input
-                      type="number"
-                      min={UNBOUND}
-                      max={SOURCE_LIMITS[bind.source] - 1}
-                      value={bind.index}
-                      onChange={(event) =>
-                        patchBind(index, { index: Number(event.target.value) })
-                      }
-                    />
-
-                    {bind.function === CUSTOM_KEY ? (
                       <input
                         className="mono"
                         placeholder="/my/service"
                         value={bind.service || ''}
                         onChange={(event) => patchBind(index, { service: event.target.value })}
                       />
-                    ) : (
-                      <span className="mono muted bind-call">
-                        {call.service || '—'}
-                        {call.kind && <em className="bind-kind">{call.kind}</em>}
-                      </span>
-                    )}
 
-                    <input
-                      type="checkbox"
-                      checked={Boolean(bind.invert)}
-                      // A Trigger has no position, so there is nothing to invert.
-                      disabled={call.kind === 'trigger'}
-                      onChange={(event) => patchBind(index, { invert: event.target.checked })}
-                    />
+                      <select
+                        value={bind.source}
+                        onChange={(event) => patchBind(index, { source: event.target.value })}
+                      >
+                        <option value={SOURCE_SWITCHES}>Panel switch</option>
+                        <option value={SOURCE_JOY}>Joystick button</option>
+                      </select>
 
-                    <button
-                      type="button"
-                      className="btn btn-sm"
-                      onClick={() => removeBind(index)}
-                      title="Remove"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-            {draft.functionBinds.length === 0 && (
-              <p className="field-hint">Nothing bound. The console cannot reach these services.</p>
+                      <input
+                        type="number"
+                        min={UNBOUND}
+                        max={SOURCE_LIMITS[bind.source] - 1}
+                        value={bind.index}
+                        onChange={(event) => patchBind(index, { index: Number(event.target.value) })}
+                      />
+
+                      <input
+                        type="checkbox"
+                        checked={Boolean(bind.invert)}
+                        disabled={call.kind === 'trigger'}
+                        onChange={(event) => patchBind(index, { invert: event.target.checked })}
+                      />
+
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={() => removeBind(index)}
+                        title="Remove"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
             )}
-            {draft.functionBinds.length > liveBinds.length && (
-              <p className="field-hint is-warn">
-                {draft.functionBinds.length - liveBinds.length} bind(s) have no control and will
-                not be sent — give them an index, or remove them.
-              </p>
+
+            {liveBinds.length === 0 && (
+              <p className="field-hint">Nothing bound. The console cannot reach these services.</p>
             )}
           </section>
 

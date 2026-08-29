@@ -27,23 +27,42 @@ export const VIDEO_MODES = {
 };
 
 /**
+ * The Jetson Nano's cameras are NOT ROS topics — it runs Ubuntu 18.04, where
+ * Humble has no binaries, so there is no v4l2_camera_node. mast/nano-camera.sh
+ * serves each one over plain HTTP instead, one port per camera counting up from
+ * 8090. A camera row holding an absolute URL is read straight by the browser;
+ * see isDirectUrl() below and "Cameras outside ROS" in README.md.
+ *
+ * Overridable because the rover's link address is the one thing that changes
+ * between the bench and a competition network.
+ */
+const NANO_HOST = envOr('VITE_NANO_HOST', '10.42.0.1');
+const nanoCamera = (port) => `http://${NANO_HOST}:${port}/?action=stream`;
+
+/**
  * `group` decides which monitor a camera lands on, replacing the old
  * "slice the array by index" coupling.
  * `switchIndex` is the bit in /switches (from console_boards) that gates it.
  */
 export const DEFAULT_CAMERAS = [
-  // Topics here are always the *base* image topic. Both transports append the
-  // `/compressed` suffix themselves — `ros` mode subscribes to
-  // `<topic>/compressed`, and web_video_server's `ros_compressed` type resolves
-  // the same companion — so a topic written with `/compressed` already on it
-  // ends up looking for `<topic>/compressed/compressed`, which nothing
-  // publishes. The ZED2i wrapper publishes through image_transport, so the base
-  // topic below has that companion. The other entries are still aspirational.
-  { id: 'cam1', name: 'Front Navigation', topic: '/zed2i/rgb/image_rect_color', switchIndex: 0, group: 'main' },
+  // Two kinds of entry live here.
+  //
+  // cam1/cam3 are absolute URLs: the two live Nano feeds, read straight by the
+  // browser with no ROS in the path. Rename them in the settings dialog once
+  // their mounting is settled — the operator reads these names.
+  //
+  // Every other row is a ROS *base* image topic, and all of them are currently
+  // aspirational: the rover Jetson was replaced by a Nano running no ROS, so
+  // nothing publishes them today. Both transports append the `/compressed`
+  // suffix themselves — `ros` mode subscribes to `<topic>/compressed`, and
+  // web_video_server's `ros_compressed` type resolves the same companion — so a
+  // topic written with `/compressed` already on it ends up looking for
+  // `<topic>/compressed/compressed`, which nothing publishes.
+  { id: 'cam1', name: 'Nano Camera 1', topic: nanoCamera(8090), switchIndex: 0, group: 'main' },
   { id: 'cam2', name: 'Arm End Effector', topic: '/camera/arm/image_raw', switchIndex: 1, group: 'aux' },
-  { id: 'cam3', name: 'Rear View', topic: '/camera/rear/image_raw', switchIndex: 2, group: 'main' },
+  { id: 'cam3', name: 'Nano Camera 2', topic: nanoCamera(8091), switchIndex: 2, group: 'main' },
   { id: 'cam4', name: 'Mast Pan/Tilt', topic: '/camera/mast/image_raw', switchIndex: 3, group: 'main' },
-  { id: 'cam5', name: 'Left Stereo', topic: '/camera/left/image_raw', switchIndex: 4, group: 'main' },
+  { id: 'cam5', name: 'Nano Camera 3', topic: nanoCamera(8092), switchIndex: 4, group: 'main' },
   { id: 'cam6', name: 'Right Stereo', topic: '/camera/right/image_raw', switchIndex: 5, group: 'main' },
   { id: 'cam7', name: 'Underbelly', topic: '/camera/belly/image_raw', switchIndex: 6, group: 'aux' },
   { id: 'cam8', name: 'Science Payload', topic: '/camera/science/image_raw', switchIndex: 7, group: 'aux' },
@@ -169,7 +188,10 @@ function normalizeBinds(binds) {
       id: String(b.id || `bind${i}`),
       function: b.function,
       source: b.source === 'joy' ? 'joy' : 'switches',
-      index: Math.max(0, Math.round(Number(b.index) || 0)),
+      // -1 is meaningful: it is a bind whose control was claimed by something
+      // else. Clamping it to 0 silently re-bound the loser to the first bit on
+      // the board, which is a switch doing something nobody asked for.
+      index: Number.isFinite(Number(b.index)) ? Math.round(Number(b.index)) : -1,
       invert: Boolean(b.invert),
       ...(b.function === 'custom' ? { service: String(b.service || '') } : {}),
     }));
@@ -305,14 +327,35 @@ function videoQuery(topic, quality, width) {
   return parts.join('&');
 }
 
+/**
+ * A camera whose "topic" is written as an absolute http(s) URL is not a ROS
+ * topic at all: it is an MJPEG source the browser talks to directly, with no
+ * rover-side ROS and no web_video_server in the path.
+ *
+ * This exists for cameras hanging off a machine that cannot run Humble — the
+ * Jetson Nano on Ubuntu 18.04, where the whole ROS layer is unavailable but
+ * `mjpg-streamer` relaying the camera's native MJPEG is not. Such a feed loses
+ * what ROS transport buys (recording, per-frame timestamps, the `ros` mode's
+ * frame-age readout); it keeps switch gating, which is decided in the UI.
+ */
+export function isDirectUrl(topic) {
+  return /^https?:\/\//i.test(String(topic || ''));
+}
+
 /** Builds the `web_video_server` stream URL for a camera. */
 export function mjpegUrl(config, topic, { quality, width } = {}) {
+  if (isDirectUrl(topic)) return topic;
   const q = videoQuery(topic, quality ?? config.videoQuality, width ?? config.videoWidth);
   return `${config.videoServerUrl}/stream?${q}`;
 }
 
 /** Single still frame, used for camera thumbnails so we do not open N streams. */
 export function snapshotUrl(config, topic, { quality, width } = {}) {
+  if (isDirectUrl(topic)) {
+    // mjpg-streamer's own convention. Anything else keeps the stream URL, so a
+    // thumbnail costs a second connection rather than showing nothing.
+    return topic.replace('action=stream', 'action=snapshot');
+  }
   const q = videoQuery(
     topic,
     quality ?? Math.min(config.videoQuality, 50),
