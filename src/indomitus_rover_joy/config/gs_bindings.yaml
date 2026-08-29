@@ -1,59 +1,10 @@
-# Which console control calls which rover function.
-#
-# Edited from the ground station's settings dialog while everything is running
-# — "Rover functions", below the camera list — and written back here by
-# gs_interpreter's ~/save_bindings. Editing it by hand still works; the node
-# reads it at startup either way.
-#
-# The whole set is one JSON string rather than a tree of parameters, because a
-# tree cannot grow a new entry at runtime: rclpy will not declare a parameter
-# nobody knew about at startup, so a newly bound function would have nowhere to
-# land. Fields per bind:
-#
-#   function: a key from switch_bindings.FUNCTIONS, or "custom" with a service
-#   source:   "switches" = the button board's 23 bits on /switches
-#             "joy"      = the joystick board's own 9 switches, in Joy.buttons
-#   index:    position within that source
-#   invert:   true when the switch is wired so that "up" reads as 0
-#
-# Which service a bind actually calls is derived, never written here: a
-# latching switch has a position and sends it with SetBool, a momentary button
-# has none and fires the /toggle twin with Trigger.
-#
-# NOTE: joy[0] is the drive/arm mode switch that joy_to_cmd_vel_node and
-# joy_to_servo_node both read. Do not bind it.
-#
-# MEASURED CONSOLE LAYOUT (probed on 2026-08-27 against the real panel, by
-# turning every control on and seeing which ones stayed on):
-#
-#   /switches  latching:       0-8, 10, 11, 12, 13, 14, 17, 22
-#   /switches  self-resetting: 9, 15, 16, 18, 19, 20, 21
-#   joy        latching:       0-8 (all of them; joy[0] is the drive/arm mode)
-#
-# The kind matters, and not only for ergonomics: a bind on the `switches`
-# source always sends its position with SetBool, so a *latching* control is the
-# only one that can hold a rover function on. On a self-resetting button the
-# same bind sends true on press and false again on release.
-#
-# A wrong index is a switch that silently drives the wrong thing, so check the
-# labels against the panel before a run.
 gs_interpreter:
   ros__parameters:
-    # Bits 8+ on purpose: DEFAULT_CAMERAS in the UI claims 0-7 for feed
-    # selection, and a bit cannot do both.
-    #
-    # All four are latching, because all four hold a state on the rover. Drive
-    # compact was on bit 9, which the probe found to be a self-resetting
-    # button: it was turning compact mode on for as long as the button was
-    # held and off again on release. It is on 12, the lowest free toggle.
-    binds: '[
-      {"function": "drive_power",   "source": "switches", "index": 8,  "invert": false},
-      {"function": "drive_compact", "source": "switches", "index": 12, "invert": false},
-      {"function": "spotlight",     "source": "switches", "index": 10, "invert": false},
-      {"function": "beautiful",     "source": "switches", "index": 11, "invert": false}
-      ]'
-    # Switch bits the settings dialog has given to camera selection. -1 means
-    # none are claimed; a real list here stops a bit both picking a feed and
-    # driving a service.
+    binds: '[{"function": "drive_power", "source": "switches", "index": 14, "invert":
+      false}, {"function": "drive_compact", "source": "switches", "index": 13, "invert":
+      false}, {"function": "drive_clear_errors", "source": "switches", "index": 15,
+      "invert": false}]'
     camera_switches:
-    - -1
+    - 2
+    - 4
+    - 7

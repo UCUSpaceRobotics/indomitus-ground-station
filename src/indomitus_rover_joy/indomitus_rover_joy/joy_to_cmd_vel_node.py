@@ -1,11 +1,23 @@
-import math
-
 import rclpy
 from rcl_interfaces.msg import SetParametersResult
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from sensor_msgs.msg import Joy
+from std_msgs.msg import Int32MultiArray
 from geometry_msgs.msg import Twist
+
+from indomitus_rover_joy.twist_modes import (
+    MODE_CURVATURE,
+    MODE_ROW,
+    MODES,
+    build_twist,
+    clamp_linear,
+)
+
+#: Where a mode switch can live. 'joy' is the stick board's own 9 switches,
+#: which ride in the same message as the axes; 'switches' is the button board.
+SOURCE_JOY = 'joy'
+SOURCE_SWITCHES = 'switches'
 
 
 class JoyToCmdVelNode(Node):
@@ -48,6 +60,28 @@ class JoyToCmdVelNode(Node):
         # and the watchdog) bypass it: a stop must never wait for a rate limit.
         self.declare_parameter('publish_rate', 50.0)
 
+        # ── steering mode ────────────────────────────────────────────────────
+        # 'row'       the yaw stick is the yaw rate — direct, and what strafing
+        #             and precise placement want.
+        # 'curvature' the yaw stick sets 1/R and yaw is derived from commanded
+        #             speed, so one arc holds across the speed range.
+        # Same two modes as rover_teleop/joystick_interpreter_node, so the
+        # console and the onboard gamepad steer alike.
+        self.declare_parameter('twist_mode', MODE_ROW)
+        # Tightest turn the yaw stick can ask for at full deflection, as
+        # curvature 1/R. 2.0 means R = 0.5 m, an ICR inside the wheelbase.
+        self.declare_parameter('max_curvature', 2.0)
+        # Token speed that commands a wheel angle while standing still, so the
+        # wheels hold the arc instead of snapping straight. See curvature_twist.
+        self.declare_parameter('angle_probe_speed', 1e-5)
+        # A panel control can flip the mode live. -1 leaves it on whatever
+        # `twist_mode` says. While bound, the switch decides and the parameter
+        # is only the value it falls back to if the board goes quiet.
+        self.declare_parameter('twist_mode_switch_source', SOURCE_SWITCHES)
+        self.declare_parameter('twist_mode_switch_index', -1)
+        # Which reading means curvature. The other reading means row.
+        self.declare_parameter('twist_mode_switch_value', 1)
+
         self.mode_switch_index = self.get_parameter('mode_switch_index').get_parameter_value().integer_value
         self.mode_switch_value = self.get_parameter('mode_switch_value').get_parameter_value().integer_value
 
@@ -74,6 +108,26 @@ class JoyToCmdVelNode(Node):
         self.max_linear_speed = self.get_parameter(
             'max_linear_speed').get_parameter_value().double_value
 
+        self.twist_mode = self._mode_param(
+            self.get_parameter('twist_mode').get_parameter_value().string_value)
+        self.max_curvature = self.get_parameter(
+            'max_curvature').get_parameter_value().double_value
+        self.angle_probe_speed = self.get_parameter(
+            'angle_probe_speed').get_parameter_value().double_value
+        self.twist_mode_switch_source = self.get_parameter(
+            'twist_mode_switch_source').get_parameter_value().string_value
+        self.twist_mode_switch_index = self.get_parameter(
+            'twist_mode_switch_index').get_parameter_value().integer_value
+        self.twist_mode_switch_value = self.get_parameter(
+            'twist_mode_switch_value').get_parameter_value().integer_value
+        # Last /switches frame, for a mode switch on the button board. That
+        # board only speaks on change, so the latest reading has to be kept
+        # here rather than expected to arrive with the sticks.
+        self.switch_state = []
+        # What the switch last resolved to, so a change can be logged once
+        # instead of at the stick rate.
+        self._logged_mode = None
+
         self.joy_timeout = self.get_parameter('joy_timeout').get_parameter_value().double_value
         self.last_joy_time = None
         self.stopped = True
@@ -85,6 +139,13 @@ class JoyToCmdVelNode(Node):
             self.joy_callback,
             10)
 
+        # The button board, for a mode switch that lives there. Subscribed
+        # unconditionally: the switch can be rebound at runtime from the UI,
+        # and a subscription that only exists when it started bound would make
+        # that silently not work.
+        self.switch_subscription = self.create_subscription(
+            Int32MultiArray, 'switches', self._on_switches, 10)
+
         # Publisher
         self.publisher_ = self.create_publisher(Twist, 'cmd_vel', 10)
 
@@ -93,7 +154,49 @@ class JoyToCmdVelNode(Node):
 
         self.get_logger().info("Joy to CmdVel Node started")
 
+    def _mode_param(self, value):
+        if value in MODES:
+            return value
+        self.get_logger().warn(f"twist_mode {value!r} is not one of {MODES}; using {MODE_ROW}")
+        return MODE_ROW
+
+    def _on_switches(self, msg):
+        self.switch_state = list(msg.data)
+
+    def active_mode(self, buttons):
+        """Which steering mode this frame should use.
+
+        A bound switch decides; the parameter is the fallback for when nothing
+        is bound, or when the board carrying the switch has not reported yet.
+        Falling back rather than guessing matters because the two modes send
+        genuinely different commands for the same stick position.
+        """
+        index = self.twist_mode_switch_index
+        if index < 0:
+            return self.twist_mode
+
+        if self.twist_mode_switch_source == SOURCE_JOY:
+            values = buttons
+        else:
+            values = self.switch_state
+
+        if index >= len(values):
+            return self.twist_mode
+        return MODE_CURVATURE if values[index] == self.twist_mode_switch_value else MODE_ROW
+
     def _on_set_parameters(self, params):
+        for param in params:
+            if param.name == 'twist_mode':
+                if param.value not in MODES:
+                    return SetParametersResult(
+                        successful=False, reason=f'twist_mode must be one of {MODES}')
+            elif param.name == 'twist_mode_switch_source':
+                if param.value not in (SOURCE_JOY, SOURCE_SWITCHES):
+                    return SetParametersResult(
+                        successful=False,
+                        reason=f"twist_mode_switch_source must be "
+                               f"'{SOURCE_JOY}' or '{SOURCE_SWITCHES}'")
+
         for param in params:
             for name in ('linear_x', 'linear_y', 'angular_z'):
                 if param.name == f'{name}_axis':
@@ -105,6 +208,18 @@ class JoyToCmdVelNode(Node):
             if param.name == 'publish_rate':
                 rate = float(param.value)
                 self.min_publish_period = 1.0 / rate if rate > 0.0 else 0.0
+            if param.name == 'twist_mode':
+                self.twist_mode = str(param.value)
+            if param.name == 'max_curvature':
+                self.max_curvature = float(param.value)
+            if param.name == 'angle_probe_speed':
+                self.angle_probe_speed = float(param.value)
+            if param.name == 'twist_mode_switch_source':
+                self.twist_mode_switch_source = str(param.value)
+            if param.name == 'twist_mode_switch_index':
+                self.twist_mode_switch_index = int(param.value)
+            if param.name == 'twist_mode_switch_value':
+                self.twist_mode_switch_value = int(param.value)
         return SetParametersResult(successful=True)
 
     def mode_selected(self, buttons):
@@ -140,28 +255,41 @@ class JoyToCmdVelNode(Node):
             self.next_publish_deadline = max(
                 now, self.next_publish_deadline + self.min_publish_period)
 
-        twist = Twist()
         num_axes = len(msg.axes)
 
         def get_axis_val(name):
             idx = self.axes[name]
             return msg.axes[idx] * self.scales[name] if 0 <= idx < num_axes else 0.0
 
-        twist.linear.x = get_axis_val('linear_x')
-        twist.linear.y = get_axis_val('linear_y')
-        twist.angular.z = get_axis_val('angular_z')
+        def get_axis_raw(name):
+            idx = self.axes[name]
+            return msg.axes[idx] if 0 <= idx < num_axes else 0.0
 
-        # Square gate: a full diagonal is 1.0 on both axes, so the magnitude
-        # runs to sqrt(2) even though neither axis is over its own limit.
-        # Shrink the pair along its own direction rather than clamping each
-        # axis separately - per-axis clamping keeps the magnitude and bends
-        # the heading, so the rover would not go where the stick points.
-        # Yaw is a separate rate in rad/s and is not part of this.
-        speed = math.hypot(twist.linear.x, twist.linear.y)
-        if 0.0 < self.max_linear_speed < speed:
-            shrink = self.max_linear_speed / speed
-            twist.linear.x *= shrink
-            twist.linear.y *= shrink
+        vx = get_axis_val('linear_x')
+        vy = get_axis_val('linear_y')
+        wz = get_axis_val('angular_z')
+        # Curvature asks the yaw stick for a radius, not a rate, so it reads
+        # the axis unscaled — angular_z_scale would otherwise quietly change
+        # the tightest turn available.
+        steer = get_axis_raw('angular_z')
+
+        # Clamp before the mode runs, not after: curvature derives yaw from the
+        # speed actually commanded, so it has to see the clamped pair or a
+        # diagonal would curve tighter than the same stick position on an axis.
+        vx, vy = clamp_linear(vx, vy, self.max_linear_speed)
+
+        mode = self.active_mode(msg.buttons)
+        if mode != self._logged_mode:
+            self.get_logger().info(f'Steering mode: {mode}')
+            self._logged_mode = mode
+
+        vx, vy, wz = build_twist(
+            mode, vx, vy, wz, steer, self.max_curvature, self.angle_probe_speed)
+
+        twist = Twist()
+        twist.linear.x = vx
+        twist.linear.y = vy
+        twist.angular.z = wz
 
         self.stopped = False
         self.publisher_.publish(twist)

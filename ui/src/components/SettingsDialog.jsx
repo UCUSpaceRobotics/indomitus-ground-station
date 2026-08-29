@@ -240,6 +240,22 @@ export default function SettingsDialog({ open, onClose }) {
       functionBinds: prev.functionBinds.filter((b) => b.function !== key),
     }));
 
+  /**
+   * The steering-mode switch is not a rover service, so it is not a function
+   * bind: it is two parameters on the node that builds the Twist. It is listed
+   * with the functions anyway, because from the console it is the same
+   * gesture — pick a switch, get a behaviour.
+   */
+  const STEERING_KEY = '__steering_mode__';
+  const modeBind = draft.driveModeBind || { source: SOURCE_SWITCHES, index: UNBOUND };
+  const modeBound = modeBind.index >= 0;
+
+  const setModeBind = (patch) =>
+    setDraft((prev) => ({
+      ...prev,
+      driveModeBind: { ...prev.driveModeBind, ...patch },
+    }));
+
   // Press-to-bind, the same gesture as the arm mapping page. While a function
   // is learning, the next control that moves claims it.
   const [learning, setLearning] = useState(null);
@@ -247,6 +263,11 @@ export default function SettingsDialog({ open, onClose }) {
   const onPanelButton = useCallback(
     (button) => {
       if (!open || !learning) return;
+      if (learning === STEERING_KEY) {
+        setModeBind({ source: button.source, index: button.index });
+        setLearning(null);
+        return;
+      }
       upsertFunctionBind(learning, { source: button.source, index: button.index });
       setLearning(null);
     },
@@ -296,6 +317,26 @@ export default function SettingsDialog({ open, onClose }) {
         });
         return;
       }
+      // The steering-mode switch lives on a different node, so it is a second
+      // call. Done after the binds so a rejection above stops here too —
+      // half-applying a control scheme is worse than applying none of it.
+      const modeResponse = await callService(
+        `${draft.driveNode}/set_parameters`,
+        'rcl_interfaces/srv/SetParameters',
+        parameterRequest([
+          ['twist_mode_switch_source', draft.driveModeBind.source, 'string'],
+          ['twist_mode_switch_index', draft.driveModeBind.index, 'int'],
+        ]),
+      );
+      const modeRejected = (modeResponse?.results || []).filter((r) => !r.successful);
+      if (modeRejected.length) {
+        setBindStatus({
+          tone: 'crit',
+          text: `Steering mode: ${modeRejected.map((r) => r.reason).join('; ')}`,
+        });
+        return;
+      }
+
       const saved = await callService(
         `${draft.interpreterNode}/save_bindings`,
         'std_srvs/srv/Trigger',
@@ -308,7 +349,14 @@ export default function SettingsDialog({ open, onClose }) {
     } catch (err) {
       setBindStatus({ tone: 'crit', text: String(err.message || err) });
     }
-  }, [callService, draft.functionBinds, draft.cameras, draft.interpreterNode]);
+  }, [
+    callService,
+    draft.functionBinds,
+    draft.cameras,
+    draft.interpreterNode,
+    draft.driveNode,
+    draft.driveModeBind,
+  ]);
 
   const save = () => {
     savedCamerasRef.current = draft.cameras;
@@ -618,6 +666,68 @@ export default function SettingsDialog({ open, onClose }) {
                 </Fragment>
               ))}
             </div>
+
+            <div className="fn-table">
+              <div className="fn-group">Console modes</div>
+              <div className={`fn-table-row ${modeBound ? '' : 'is-unbound'}`}>
+                <span className="fn-name">Steering mode</span>
+                <span className="mono muted bind-call">
+                  row / curvature
+                  <em className="bind-kind">local</em>
+                </span>
+                <span className="fn-bound">
+                  {learning === STEERING_KEY ? (
+                    <span className="chip is-warn">move a control…</span>
+                  ) : modeBound ? (
+                    <>
+                      <select
+                        value={modeBind.source}
+                        onChange={(event) => setModeBind({ source: event.target.value })}
+                      >
+                        <option value={SOURCE_SWITCHES}>Panel switch</option>
+                        <option value={SOURCE_JOY}>Joystick button</option>
+                      </select>
+                      <input
+                        type="number"
+                        min={0}
+                        max={SOURCE_LIMITS[modeBind.source] - 1}
+                        value={modeBind.index}
+                        onChange={(event) => setModeBind({ index: Number(event.target.value) })}
+                      />
+                    </>
+                  ) : (
+                    <span className="muted">unbound</span>
+                  )}
+                </span>
+                <span />
+                <span className="fn-actions">
+                  <button
+                    type="button"
+                    className={`btn btn-sm ${learning === STEERING_KEY ? 'is-active' : ''}`}
+                    onClick={() =>
+                      setLearning(learning === STEERING_KEY ? null : STEERING_KEY)
+                    }
+                  >
+                    {learning === STEERING_KEY ? 'Cancel' : 'Bind'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    disabled={!modeBound}
+                    onClick={() => setModeBind({ index: UNBOUND })}
+                    title="Unbind"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </span>
+              </div>
+            </div>
+            <p className="field-hint">
+              Held on: the yaw stick sets a turn radius, so one arc holds across the speed range.
+              Off: the yaw stick is the yaw rate directly, which is what strafing and precise
+              placement want. Same two modes the rover's own gamepad has. Unbound leaves the node
+              on whichever mode its <span className="mono">twist_mode</span> parameter names.
+            </p>
 
             <div className="settings-subhead">
               <h4>Custom services</h4>

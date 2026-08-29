@@ -141,12 +141,19 @@ function defaults() {
     armNode: '/arm_gamepad',
     /** Node that turns console switches into rover service calls. */
     interpreterNode: '/gs_interpreter',
+    /** Node that turns the sticks into /cmd_vel_ext, for the steering mode. */
+    driveNode: '/joy_to_cmd_vel_node',
     /**
      * Console control -> rover function. The node is authoritative once these
      * are applied; this copy is the editing draft, so the dialog opens on what
      * was last sent rather than empty while the rover is unreachable.
      */
     functionBinds: [],
+    /**
+     * Panel control that flips the steering mode on joy_to_cmd_vel_node.
+     * index -1 leaves the node on whatever its `twist_mode` parameter says.
+     */
+    driveModeBind: { source: 'switches', index: -1 },
   };
 }
 
@@ -197,6 +204,12 @@ function normalizeBinds(binds) {
     }));
 }
 
+function normalizeModeBind(bind) {
+  const source = bind?.source === 'joy' ? 'joy' : 'switches';
+  const index = Number.isFinite(Number(bind?.index)) ? Math.round(Number(bind.index)) : -1;
+  return { source, index };
+}
+
 function normalizeCameras(cameras) {
   // An empty list is a real answer — the settings dialog saves the camera table
   // as it is edited, so deleting the last row has to stay deleted instead of
@@ -240,7 +253,9 @@ function normalize(raw) {
     joyNode: migrateJoyNode(String(merged.joyNode || base.joyNode).replace(/\/+$/, ''), base.joyNode),
     armNode: String(merged.armNode || base.armNode).replace(/\/+$/, ''),
     interpreterNode: String(merged.interpreterNode || base.interpreterNode).replace(/\/+$/, ''),
+    driveNode: String(merged.driveNode || base.driveNode).replace(/\/+$/, ''),
     functionBinds: normalizeBinds(merged.functionBinds),
+    driveModeBind: normalizeModeBind(merged.driveModeBind),
   };
 }
 

@@ -77,7 +77,8 @@ const ROUTES = [
   ['#/', ['Indomitus Ground Station', 'Left monitor', 'Right monitor', 'Keyboard',
     // The settings dialog is always in the DOM, so its function list is
     // covered here: every rover function must be listed whether bound or not.
-    'Rover functions', 'Drive power', 'Spotlight', 'Custom services']],
+    'Rover functions', 'Drive power', 'Spotlight', 'Custom services',
+    'Console modes', 'Steering mode']],
   // Both console boards are listed, including the stick board's own switches,
   // which arrive in Joy.buttons rather than on /switches.
   ['#/left', ['Telemetry', 'Command path', 'Control box', 'Button board', 'Joystick board',

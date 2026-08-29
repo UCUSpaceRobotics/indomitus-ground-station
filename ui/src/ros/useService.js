@@ -58,7 +58,7 @@ export function useServiceCaller() {
 /**
  * Builds an `rcl_interfaces/srv/SetParameters` request.
  *
- * Type tags are the ParameterType enum: 3 = double, 4 = string,
+ * Type tags are the ParameterType enum: 2 = integer, 3 = double, 4 = string,
  * 7 = integer array, 8 = double array. Pass `['name', value, 'int_array']` to
  * force the integer form — `axis_map` is declared as integers on the node and
  * rclpy rejects a double array for it, which is not obvious from the error it
@@ -71,17 +71,18 @@ export function parameterRequest(entries) {
       const isArray = Array.isArray(value);
       const isIntArray = isArray && kind === 'int_array';
       const isString = kind === 'string';
+      const isInt = kind === 'int';
       return {
         name,
         value: {
-          type: isString ? 4 : isIntArray ? 7 : isArray ? 8 : 3,
-          double_value: isArray || isString ? 0 : Number(value),
+          type: isInt ? 2 : isString ? 4 : isIntArray ? 7 : isArray ? 8 : 3,
+          double_value: isArray || isString || isInt ? 0 : Number(value),
           double_array_value: isArray && !isIntArray ? value.map(Number) : [],
           integer_array_value: isIntArray ? value.map((v) => Math.round(Number(v))) : [],
           // rosbridge fills unset fields itself, but roslib serializes exactly
           // what it is handed, and rclpy rejects a partial ParameterValue.
           bool_value: false,
-          integer_value: 0,
+          integer_value: isInt ? Math.round(Number(value)) : 0,
           string_value: isString ? String(value) : '',
           byte_array_value: [],
           bool_array_value: [],
