@@ -15,6 +15,7 @@ import pytest
 from indomitus_rover_joy.twist_modes import (
     MODE_CURVATURE,
     MODE_ROW,
+    apply_granny,
     build_twist,
     clamp_linear,
     curvature_twist,
@@ -132,3 +133,28 @@ def test_inside_the_limit_nothing_moves():
 
 def test_a_zero_limit_disables_the_clamp():
     assert clamp_linear(3.0, 4.0, 0.0) == (3.0, 4.0)
+
+
+# ── granny ───────────────────────────────────────────────────────────────────
+
+def test_granny_off_changes_nothing():
+    assert apply_granny(0.6, -0.2, 0.9, 0.1, False) == (0.6, -0.2, 0.9)
+
+
+def test_granny_scales_every_component():
+    vx, vy, wz = apply_granny(0.6, -0.2, 0.8, 0.5, True)
+    assert (vx, vy, wz) == pytest.approx((0.3, -0.1, 0.4))
+
+
+def test_granny_preserves_the_arc():
+    # Yaw is scaled with the linear pair on purpose: scaling only translation
+    # would tighten every turn as a side effect of slowing down, so a line the
+    # operator had lined up would stop being the line they get.
+    vx, vy, wz = curve(0.6, 0.0, 0.5)
+    gx, gy, gz = apply_granny(vx, vy, wz, 0.1, True)
+    assert gz / gx == pytest.approx(wz / vx)
+
+
+def test_granny_preserves_heading():
+    vx, vy, _ = apply_granny(0.3, 0.4, 0.0, 0.1, True)
+    assert vy / vx == pytest.approx(4 / 3)

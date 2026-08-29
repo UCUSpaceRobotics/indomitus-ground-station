@@ -80,6 +80,20 @@ def build_twist(mode, vx, vy, wz, steer, max_curvature, angle_probe_speed):
     return row_twist(vx, vy, wz)
 
 
+def apply_granny(vx, vy, wz, scale, enabled):
+    """Scale the whole command down for fine work.
+
+    Applied after the mode, and to yaw as well as the linear pair, so the arc
+    an operator has lined up in curvature mode is the arc they still get —
+    scaling only the linear part would tighten every turn as a side effect of
+    slowing down.
+    """
+    if not enabled:
+        return float(vx), float(vy), float(wz)
+    scale = float(scale)
+    return float(vx) * scale, float(vy) * scale, float(wz) * scale
+
+
 def clamp_linear(vx, vy, max_linear_speed):
     """Shrink the linear pair along its own direction.
 

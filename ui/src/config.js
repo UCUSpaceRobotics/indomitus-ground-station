@@ -156,6 +156,12 @@ function defaults() {
     driveModeBind: { source: 'switches', index: -1 },
     /** Steering mode used when no switch is bound, and the fallback when one is. */
     twistMode: 'row',
+    /** Everything scaled down for fine work. */
+    grannyBind: { source: 'switches', index: -1 },
+    grannyMode: false,
+    /** Stop commanding the rover from this console without killing the node. */
+    muteBind: { source: 'switches', index: -1 },
+    mute: false,
   };
 }
 
@@ -259,6 +265,10 @@ function normalize(raw) {
     functionBinds: normalizeBinds(merged.functionBinds),
     driveModeBind: normalizeModeBind(merged.driveModeBind),
     twistMode: merged.twistMode === 'curvature' ? 'curvature' : 'row',
+    grannyBind: normalizeModeBind(merged.grannyBind),
+    grannyMode: Boolean(merged.grannyMode),
+    muteBind: normalizeModeBind(merged.muteBind),
+    mute: Boolean(merged.mute),
   };
 }
 

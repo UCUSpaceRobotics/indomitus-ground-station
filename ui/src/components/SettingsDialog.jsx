@@ -241,20 +241,42 @@ export default function SettingsDialog({ open, onClose }) {
     }));
 
   /**
-   * The steering-mode switch is not a rover service, so it is not a function
-   * bind: it is two parameters on the node that builds the Twist. It is listed
-   * with the functions anyway, because from the console it is the same
-   * gesture — pick a switch, get a behaviour.
+   * Console modes are not rover services, so they are not function binds: each
+   * is a pair of parameters on the node that builds the Twist. They are listed
+   * with the functions anyway, because from the console it is the same gesture
+   * — pick a switch, get a behaviour.
    */
-  const STEERING_KEY = '__steering_mode__';
-  const modeBind = draft.driveModeBind || { source: SOURCE_SWITCHES, index: UNBOUND };
-  const modeBound = modeBind.index >= 0;
+  const CONSOLE_MODES = [
+    {
+      key: 'driveModeBind',
+      name: 'Steering mode',
+      calls: 'row / curvature',
+      hint: 'Curvature: the yaw stick sets a turn radius, so one arc holds across the '
+        + 'speed range. Row: the yaw stick is the yaw rate directly, which is what '
+        + 'strafing and precise placement want.',
+    },
+    {
+      key: 'grannyBind',
+      name: 'Granny mode',
+      calls: 'speed \u00d70.1',
+      hint: 'Scales the whole command — yaw included, so a turn keeps its shape '
+        + 'instead of tightening as you slow down.',
+    },
+    {
+      key: 'muteBind',
+      name: 'No output',
+      calls: 'stop commanding',
+      hint: 'Hands the drive to the onboard gamepad or autonomy without killing the '
+        + 'node. One zero Twist goes out first, then silence: twist_mux holds the '
+        + 'last command it was given, so going quiet alone would leave the rover '
+        + 'running on it.',
+    },
+  ];
 
-  const setModeBind = (patch) =>
-    setDraft((prev) => ({
-      ...prev,
-      driveModeBind: { ...prev.driveModeBind, ...patch },
-    }));
+  const bindOf = (key) => draft[key] || { source: SOURCE_SWITCHES, index: UNBOUND };
+
+  const setModeBind = (key, patch) =>
+    setDraft((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
 
   // Press-to-bind, the same gesture as the arm mapping page. While a function
   // is learning, the next control that moves claims it.
@@ -263,8 +285,8 @@ export default function SettingsDialog({ open, onClose }) {
   const onPanelButton = useCallback(
     (button) => {
       if (!open || !learning) return;
-      if (learning === STEERING_KEY) {
-        setModeBind({ source: button.source, index: button.index });
+      if (CONSOLE_MODES.some((m) => m.key === learning)) {
+        setModeBind(learning, { source: button.source, index: button.index });
         setLearning(null);
         return;
       }
@@ -327,6 +349,12 @@ export default function SettingsDialog({ open, onClose }) {
           ['twist_mode', draft.twistMode, 'string'],
           ['twist_mode_switch_source', draft.driveModeBind.source, 'string'],
           ['twist_mode_switch_index', draft.driveModeBind.index, 'int'],
+          ['granny_mode', draft.grannyMode, 'bool'],
+          ['granny_switch_source', draft.grannyBind.source, 'string'],
+          ['granny_switch_index', draft.grannyBind.index, 'int'],
+          ['mute', draft.mute, 'bool'],
+          ['mute_switch_source', draft.muteBind.source, 'string'],
+          ['mute_switch_index', draft.muteBind.index, 'int'],
         ]),
       );
       const modeRejected = (modeResponse?.results || []).filter((r) => !r.successful);
@@ -358,6 +386,10 @@ export default function SettingsDialog({ open, onClose }) {
     draft.driveNode,
     draft.driveModeBind,
     draft.twistMode,
+    draft.grannyBind,
+    draft.grannyMode,
+    draft.muteBind,
+    draft.mute,
   ]);
 
   const save = () => {
@@ -671,77 +703,107 @@ export default function SettingsDialog({ open, onClose }) {
 
             <div className="fn-table">
               <div className="fn-group">Console modes</div>
-              <div className={`fn-table-row ${modeBound ? '' : 'is-unbound'}`}>
-                <span className="fn-name">Steering mode</span>
-                <span className="mono muted bind-call">
-                  row / curvature
-                  <em className="bind-kind">local</em>
-                </span>
-                <span className="fn-bound">
-                  {learning === STEERING_KEY ? (
-                    <span className="chip is-warn">move a control…</span>
-                  ) : modeBound ? (
-                    <>
-                      <select
-                        value={modeBind.source}
-                        onChange={(event) => setModeBind({ source: event.target.value })}
+              {CONSOLE_MODES.map((mode) => {
+                const bind = bindOf(mode.key);
+                const bound = bind.index >= 0;
+                const isLearning = learning === mode.key;
+                return (
+                  <div
+                    className={`fn-table-row ${bound ? '' : 'is-unbound'}`}
+                    key={mode.key}
+                    title={mode.hint}
+                  >
+                    <span className="fn-name">{mode.name}</span>
+                    <span className="mono muted bind-call">
+                      {mode.calls}
+                      <em className="bind-kind">local</em>
+                    </span>
+                    <span className="fn-bound">
+                      {isLearning ? (
+                        <span className="chip is-warn">move a control…</span>
+                      ) : bound ? (
+                        <>
+                          <select
+                            value={bind.source}
+                            onChange={(event) =>
+                              setModeBind(mode.key, { source: event.target.value })
+                            }
+                          >
+                            <option value={SOURCE_SWITCHES}>Panel switch</option>
+                            <option value={SOURCE_JOY}>Joystick button</option>
+                          </select>
+                          <input
+                            type="number"
+                            min={0}
+                            max={SOURCE_LIMITS[bind.source] - 1}
+                            value={bind.index}
+                            onChange={(event) =>
+                              setModeBind(mode.key, { index: Number(event.target.value) })
+                            }
+                          />
+                        </>
+                      ) : (
+                        <span className="muted">unbound</span>
+                      )}
+                    </span>
+
+                    <span>
+                      {/* With no switch bound this is just a setting, so let it
+                          be set. While one is bound it is what the node falls
+                          back to if that board stops reporting. */}
+                      {mode.key === 'driveModeBind' ? (
+                        <select
+                          value={draft.twistMode}
+                          onChange={(event) =>
+                            setDraft((prev) => ({ ...prev, twistMode: event.target.value }))
+                          }
+                        >
+                          <option value="row">row</option>
+                          <option value="curvature">curvature</option>
+                        </select>
+                      ) : (
+                        <input
+                          type="checkbox"
+                          checked={Boolean(
+                            mode.key === 'grannyBind' ? draft.grannyMode : draft.mute,
+                          )}
+                          onChange={(event) =>
+                            setDraft((prev) => ({
+                              ...prev,
+                              [mode.key === 'grannyBind' ? 'grannyMode' : 'mute']:
+                                event.target.checked,
+                            }))
+                          }
+                        />
+                      )}
+                    </span>
+
+                    <span className="fn-actions">
+                      <button
+                        type="button"
+                        className={`btn btn-sm ${isLearning ? 'is-active' : ''}`}
+                        onClick={() => setLearning(isLearning ? null : mode.key)}
                       >
-                        <option value={SOURCE_SWITCHES}>Panel switch</option>
-                        <option value={SOURCE_JOY}>Joystick button</option>
-                      </select>
-                      <input
-                        type="number"
-                        min={0}
-                        max={SOURCE_LIMITS[modeBind.source] - 1}
-                        value={modeBind.index}
-                        onChange={(event) => setModeBind({ index: Number(event.target.value) })}
-                      />
-                    </>
-                  ) : (
-                    <span className="muted">unbound</span>
-                  )}
-                </span>
-                <span>
-                  {/* With no switch bound the mode is just a setting, so let it
-                      be set. While one is bound this picks what the node falls
-                      back to if that board stops reporting. */}
-                  <select
-                    value={draft.twistMode}
-                    onChange={(event) => setDraft((prev) => ({
-                      ...prev, twistMode: event.target.value,
-                    }))}
-                  >
-                    <option value="row">row</option>
-                    <option value="curvature">curvature</option>
-                  </select>
-                </span>
-                <span className="fn-actions">
-                  <button
-                    type="button"
-                    className={`btn btn-sm ${learning === STEERING_KEY ? 'is-active' : ''}`}
-                    onClick={() =>
-                      setLearning(learning === STEERING_KEY ? null : STEERING_KEY)
-                    }
-                  >
-                    {learning === STEERING_KEY ? 'Cancel' : 'Bind'}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-sm"
-                    disabled={!modeBound}
-                    onClick={() => setModeBind({ index: UNBOUND })}
-                    title="Unbind"
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                </span>
-              </div>
+                        {isLearning ? 'Cancel' : 'Bind'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        disabled={!bound}
+                        onClick={() => setModeBind(mode.key, { index: UNBOUND })}
+                        title="Unbind"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </span>
+                  </div>
+                );
+              })}
             </div>
             <p className="field-hint">
-              Held on: the yaw stick sets a turn radius, so one arc holds across the speed range.
-              Off: the yaw stick is the yaw rate directly, which is what strafing and precise
-              placement want. Same two modes the rover's own gamepad has. Unbound leaves the node
-              on whichever mode its <span className="mono">twist_mode</span> parameter names.
+              These are console-side settings on <span className="mono">joy_to_cmd_vel_node</span>,
+              not rover services. The last column is what applies when no switch is bound — and
+              what the node falls back to if a bound board stops reporting.
             </p>
 
             <div className="settings-subhead">

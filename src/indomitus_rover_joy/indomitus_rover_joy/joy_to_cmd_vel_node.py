@@ -10,6 +10,7 @@ from indomitus_rover_joy.twist_modes import (
     MODE_CURVATURE,
     MODE_ROW,
     MODES,
+    apply_granny,
     build_twist,
     clamp_linear,
 )
@@ -82,6 +83,27 @@ class JoyToCmdVelNode(Node):
         # Which reading means curvature. The other reading means row.
         self.declare_parameter('twist_mode_switch_value', 1)
 
+        # ── granny mode ──────────────────────────────────────────────────────
+        # Everything scaled down for fine work, exactly as rover_teleop does it.
+        self.declare_parameter('granny_speed_scale', 0.1)
+        self.declare_parameter('granny_mode', False)
+        self.declare_parameter('granny_switch_source', SOURCE_SWITCHES)
+        self.declare_parameter('granny_switch_index', -1)
+        self.declare_parameter('granny_switch_value', 1)
+
+        # ── mute ─────────────────────────────────────────────────────────────
+        # Stop commanding the rover from this console without killing the node,
+        # so the onboard gamepad or an autonomy stack owns the drive uncontested.
+        #
+        # Muting is not simply "stop publishing": twist_mux holds the last
+        # command it was given, so going quiet mid-drive would leave the rover
+        # running on it. One zero Twist goes out first, then silence — the same
+        # shape as handing the sticks to the arm.
+        self.declare_parameter('mute', False)
+        self.declare_parameter('mute_switch_source', SOURCE_SWITCHES)
+        self.declare_parameter('mute_switch_index', -1)
+        self.declare_parameter('mute_switch_value', 1)
+
         self.mode_switch_index = self.get_parameter('mode_switch_index').get_parameter_value().integer_value
         self.mode_switch_value = self.get_parameter('mode_switch_value').get_parameter_value().integer_value
 
@@ -120,6 +142,26 @@ class JoyToCmdVelNode(Node):
             'twist_mode_switch_index').get_parameter_value().integer_value
         self.twist_mode_switch_value = self.get_parameter(
             'twist_mode_switch_value').get_parameter_value().integer_value
+        self.granny_speed_scale = self.get_parameter(
+            'granny_speed_scale').get_parameter_value().double_value
+        self.granny_mode = self.get_parameter('granny_mode').get_parameter_value().bool_value
+        self.granny_switch_source = self.get_parameter(
+            'granny_switch_source').get_parameter_value().string_value
+        self.granny_switch_index = self.get_parameter(
+            'granny_switch_index').get_parameter_value().integer_value
+        self.granny_switch_value = self.get_parameter(
+            'granny_switch_value').get_parameter_value().integer_value
+
+        self.mute = self.get_parameter('mute').get_parameter_value().bool_value
+        self.mute_switch_source = self.get_parameter(
+            'mute_switch_source').get_parameter_value().string_value
+        self.mute_switch_index = self.get_parameter(
+            'mute_switch_index').get_parameter_value().integer_value
+        self.mute_switch_value = self.get_parameter(
+            'mute_switch_value').get_parameter_value().integer_value
+        self._logged_granny = None
+        self._logged_mute = None
+
         # Last /switches frame, for a mode switch on the button board. That
         # board only speaks on change, so the latest reading has to be kept
         # here rather than expected to arrive with the sticks.
@@ -163,26 +205,39 @@ class JoyToCmdVelNode(Node):
     def _on_switches(self, msg):
         self.switch_state = list(msg.data)
 
-    def active_mode(self, buttons):
-        """Which steering mode this frame should use.
+    def _switch_says(self, source, index, on_value, buttons, fallback):
+        """Resolve one bound toggle, or fall back when it cannot be read.
 
         A bound switch decides; the parameter is the fallback for when nothing
         is bound, or when the board carrying the switch has not reported yet.
-        Falling back rather than guessing matters because the two modes send
-        genuinely different commands for the same stick position.
+        Falling back rather than guessing matters because every one of these
+        changes what the rover is commanded to do.
         """
-        index = self.twist_mode_switch_index
         if index < 0:
-            return self.twist_mode
-
-        if self.twist_mode_switch_source == SOURCE_JOY:
-            values = buttons
-        else:
-            values = self.switch_state
-
+            return fallback
+        values = buttons if source == SOURCE_JOY else self.switch_state
         if index >= len(values):
+            return fallback
+        return values[index] == on_value
+
+    def active_mode(self, buttons):
+        """Which steering mode this frame should use."""
+        if self.twist_mode_switch_index < 0:
             return self.twist_mode
-        return MODE_CURVATURE if values[index] == self.twist_mode_switch_value else MODE_ROW
+        curvature = self._switch_says(
+            self.twist_mode_switch_source, self.twist_mode_switch_index,
+            self.twist_mode_switch_value, buttons, self.twist_mode == MODE_CURVATURE)
+        return MODE_CURVATURE if curvature else MODE_ROW
+
+    def active_granny(self, buttons):
+        return self._switch_says(
+            self.granny_switch_source, self.granny_switch_index,
+            self.granny_switch_value, buttons, self.granny_mode)
+
+    def active_mute(self, buttons):
+        return self._switch_says(
+            self.mute_switch_source, self.mute_switch_index,
+            self.mute_switch_value, buttons, self.mute)
 
     def _on_set_parameters(self, params):
         for param in params:
@@ -190,11 +245,13 @@ class JoyToCmdVelNode(Node):
                 if param.value not in MODES:
                     return SetParametersResult(
                         successful=False, reason=f'twist_mode must be one of {MODES}')
-            elif param.name == 'twist_mode_switch_source':
+            elif param.name in ('twist_mode_switch_source',
+                                'granny_switch_source',
+                                'mute_switch_source'):
                 if param.value not in (SOURCE_JOY, SOURCE_SWITCHES):
                     return SetParametersResult(
                         successful=False,
-                        reason=f"twist_mode_switch_source must be "
+                        reason=f"{param.name} must be "
                                f"'{SOURCE_JOY}' or '{SOURCE_SWITCHES}'")
 
         for param in params:
@@ -220,6 +277,24 @@ class JoyToCmdVelNode(Node):
                 self.twist_mode_switch_index = int(param.value)
             if param.name == 'twist_mode_switch_value':
                 self.twist_mode_switch_value = int(param.value)
+            if param.name == 'granny_speed_scale':
+                self.granny_speed_scale = float(param.value)
+            if param.name == 'granny_mode':
+                self.granny_mode = bool(param.value)
+            if param.name == 'granny_switch_source':
+                self.granny_switch_source = str(param.value)
+            if param.name == 'granny_switch_index':
+                self.granny_switch_index = int(param.value)
+            if param.name == 'granny_switch_value':
+                self.granny_switch_value = int(param.value)
+            if param.name == 'mute':
+                self.mute = bool(param.value)
+            if param.name == 'mute_switch_source':
+                self.mute_switch_source = str(param.value)
+            if param.name == 'mute_switch_index':
+                self.mute_switch_index = int(param.value)
+            if param.name == 'mute_switch_value':
+                self.mute_switch_value = int(param.value)
         return SetParametersResult(successful=True)
 
     def mode_selected(self, buttons):
@@ -241,6 +316,22 @@ class JoyToCmdVelNode(Node):
                 self.next_publish_deadline = None
                 self.get_logger().info('Drive mode deselected — rover stopped')
             return
+
+        if self.active_mute(msg.buttons):
+            # Same shape as the arm handover: one zero Twist, then silence.
+            # twist_mux holds the last command it was given, so simply going
+            # quiet would leave the rover running on it.
+            if not self.stopped:
+                self.publisher_.publish(Twist())
+                self.stopped = True
+                self.next_publish_deadline = None
+            if self._logged_mute is not True:
+                self.get_logger().info('Output muted — this console is not commanding the rover')
+                self._logged_mute = True
+            return
+        if self._logged_mute is not False:
+            self.get_logger().info('Output live')
+            self._logged_mute = False
 
         # Rate limit before building anything. Checked after the stop path above
         # so a handover always gets through immediately.
@@ -285,6 +376,12 @@ class JoyToCmdVelNode(Node):
 
         vx, vy, wz = build_twist(
             mode, vx, vy, wz, steer, self.max_curvature, self.angle_probe_speed)
+
+        granny = self.active_granny(msg.buttons)
+        if granny != self._logged_granny:
+            self.get_logger().info(f'Granny mode: {"ENABLED" if granny else "DISABLED"}')
+            self._logged_granny = granny
+        vx, vy, wz = apply_granny(vx, vy, wz, self.granny_speed_scale, granny)
 
         twist = Twist()
         twist.linear.x = vx
