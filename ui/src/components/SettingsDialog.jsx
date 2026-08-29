@@ -90,6 +90,50 @@ export default function SettingsDialog({ open, onClose }) {
     }
   }, [open]);
 
+  /**
+   * Read the binds back from the node whenever the dialog opens.
+   *
+   * The node is the source of truth: it persists them itself and keeps them
+   * across restarts, while this browser's copy is only an editing draft. A
+   * console opened from a second machine, or after the cache was cleared,
+   * used to show everything unbound while the rover was correctly wired —
+   * which reads as "my configuration vanished".
+   */
+  useEffect(() => {
+    if (!open || !connected) return;
+    let cancelled = false;
+    callService(
+      `${configRef.current.interpreterNode}/get_parameters`,
+      'rcl_interfaces/srv/GetParameters',
+      { names: ['binds'] },
+    )
+      .then((response) => {
+        if (cancelled) return;
+        const raw = response?.values?.[0]?.string_value;
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed) || parsed.length === 0) return;
+        setDraft((prev) => ({
+          ...prev,
+          functionBinds: parsed.map((b, i) => ({
+            id: `node${i}`,
+            function: String(b.function || ''),
+            source: b.source === SOURCE_JOY ? SOURCE_JOY : SOURCE_SWITCHES,
+            index: Number.isFinite(Number(b.index)) ? Math.round(Number(b.index)) : UNBOUND,
+            invert: Boolean(b.invert),
+            ...(b.function === CUSTOM_KEY ? { service: String(b.service || '') } : {}),
+          })),
+        }));
+        setBindStatus({ tone: 'ok', text: 'Read the binds from the rover.' });
+      })
+      // Not an error worth shouting about: the node may simply not be up, and
+      // the local draft is a usable starting point.
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [open, connected, callService]);
+
   // The camera table saves itself. Retargeting a feed is done *while looking at
   // the feed*, so the tiles behind the dialog have to follow the edit, and an
   // operator who closes the dialog to check one must not lose the change. The

@@ -1,0 +1,11 @@
+gs_interpreter:
+  ros__parameters:
+    binds: '[{"function": "drive_power", "source": "switches", "index": 14, "invert":
+      false}, {"function": "drive_compact", "source": "switches", "index": 13, "invert":
+      false}, {"function": "drive_clear_errors", "source": "switches", "index": 15,
+      "invert": false}]'
+    camera_switches:
+    - 5
+    - 2
+    - 4
+    - 7
