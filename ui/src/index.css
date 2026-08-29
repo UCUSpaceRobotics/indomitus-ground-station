@@ -1534,7 +1534,9 @@ kbd {
 .camera-table input,
 .camera-table select,
 .bind-table input,
-.bind-table select {
+.bind-table select,
+.fn-table input,
+.fn-table select {
   font: inherit;
   font-size: 13px;
   color: var(--text);
@@ -1551,6 +1553,8 @@ kbd {
 .camera-table select:focus,
 .bind-table input:focus,
 .bind-table select:focus,
+.fn-table input:focus,
+.fn-table select:focus,
 .console-controls select:focus {
   outline: 2px solid var(--accent);
   outline-offset: -1px;
@@ -1676,8 +1680,33 @@ kbd {
   min-width: 0;
 }
 
+/* The source select takes what is left after the index, rather than sizing to
+   its longest option — otherwise "Joystick button" pushes the index box out of
+   the column. */
+.fn-bound select {
+  flex: 1;
+  min-width: 0;
+}
+
 .fn-bound input[type='number'] {
-  width: 56px;
+  width: 58px;
+  flex: none;
+  text-align: center;
+}
+
+/* Padding tuned down from the shared field rule: these sit in a dense table
+   next to 24px buttons, and the default 6px makes the row taller than the
+   controls in it. */
+.fn-table input,
+.fn-table select {
+  padding: 4px 6px;
+  font-size: 12.5px;
+}
+
+.fn-table input[type='checkbox'] {
+  padding: 0;
+  justify-self: center;
+  accent-color: var(--accent);
 }
 
 .fn-actions {
