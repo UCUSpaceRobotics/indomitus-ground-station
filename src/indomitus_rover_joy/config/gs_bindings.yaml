@@ -5,7 +5,7 @@ gs_interpreter:
       false}, {"function": "drive_clear_errors", "source": "switches", "index": 15,
       "invert": false}]'
     camera_switches:
-    - 1
+    - 5
     - 2
     - 4
     - 7

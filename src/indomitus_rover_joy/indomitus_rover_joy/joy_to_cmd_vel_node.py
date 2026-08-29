@@ -83,6 +83,17 @@ class JoyToCmdVelNode(Node):
         # Which reading means curvature. The other reading means row.
         self.declare_parameter('twist_mode_switch_value', 1)
 
+        # ── strafe ───────────────────────────────────────────────────────────
+        # Off by default, matching rover_teleop's vy_enabled_default. A swerve
+        # rover can strafe, but most driving does not want it: with vy live,
+        # a stick pushed diagonally crabs instead of turning. While it is off
+        # the row mode also mirrors yaw in reverse, so the rover steers like a
+        # car — see swerve_wz_correction.
+        self.declare_parameter('vy_enabled', False)
+        self.declare_parameter('vy_switch_source', SOURCE_SWITCHES)
+        self.declare_parameter('vy_switch_index', -1)
+        self.declare_parameter('vy_switch_value', 1)
+
         # ── granny mode ──────────────────────────────────────────────────────
         # Everything scaled down for fine work, exactly as rover_teleop does it.
         self.declare_parameter('granny_speed_scale', 0.1)
@@ -142,6 +153,15 @@ class JoyToCmdVelNode(Node):
             'twist_mode_switch_index').get_parameter_value().integer_value
         self.twist_mode_switch_value = self.get_parameter(
             'twist_mode_switch_value').get_parameter_value().integer_value
+        self.vy_enabled = self.get_parameter('vy_enabled').get_parameter_value().bool_value
+        self.vy_switch_source = self.get_parameter(
+            'vy_switch_source').get_parameter_value().string_value
+        self.vy_switch_index = self.get_parameter(
+            'vy_switch_index').get_parameter_value().integer_value
+        self.vy_switch_value = self.get_parameter(
+            'vy_switch_value').get_parameter_value().integer_value
+        self._logged_vy = None
+
         self.granny_speed_scale = self.get_parameter(
             'granny_speed_scale').get_parameter_value().double_value
         self.granny_mode = self.get_parameter('granny_mode').get_parameter_value().bool_value
@@ -229,6 +249,11 @@ class JoyToCmdVelNode(Node):
             self.twist_mode_switch_value, buttons, self.twist_mode == MODE_CURVATURE)
         return MODE_CURVATURE if curvature else MODE_ROW
 
+    def active_vy(self, buttons):
+        return self._switch_says(
+            self.vy_switch_source, self.vy_switch_index,
+            self.vy_switch_value, buttons, self.vy_enabled)
+
     def active_granny(self, buttons):
         return self._switch_says(
             self.granny_switch_source, self.granny_switch_index,
@@ -246,6 +271,7 @@ class JoyToCmdVelNode(Node):
                     return SetParametersResult(
                         successful=False, reason=f'twist_mode must be one of {MODES}')
             elif param.name in ('twist_mode_switch_source',
+                                'vy_switch_source',
                                 'granny_switch_source',
                                 'mute_switch_source'):
                 if param.value not in (SOURCE_JOY, SOURCE_SWITCHES):
@@ -277,6 +303,14 @@ class JoyToCmdVelNode(Node):
                 self.twist_mode_switch_index = int(param.value)
             if param.name == 'twist_mode_switch_value':
                 self.twist_mode_switch_value = int(param.value)
+            if param.name == 'vy_enabled':
+                self.vy_enabled = bool(param.value)
+            if param.name == 'vy_switch_source':
+                self.vy_switch_source = str(param.value)
+            if param.name == 'vy_switch_index':
+                self.vy_switch_index = int(param.value)
+            if param.name == 'vy_switch_value':
+                self.vy_switch_value = int(param.value)
             if param.name == 'granny_speed_scale':
                 self.granny_speed_scale = float(param.value)
             if param.name == 'granny_mode':
@@ -356,8 +390,15 @@ class JoyToCmdVelNode(Node):
             idx = self.axes[name]
             return msg.axes[idx] if 0 <= idx < num_axes else 0.0
 
+        vy_enabled = self.active_vy(msg.buttons)
+        if vy_enabled != self._logged_vy:
+            self.get_logger().info(f'Strafe (vy): {"ENABLED" if vy_enabled else "DISABLED"}')
+            self._logged_vy = vy_enabled
+
         vx = get_axis_val('linear_x')
-        vy = get_axis_val('linear_y')
+        # Zeroed at the source rather than after the mode, so the clamp and the
+        # curvature both see the speed the rover is actually being asked for.
+        vy = get_axis_val('linear_y') if vy_enabled else 0.0
         wz = get_axis_val('angular_z')
         # Curvature asks the yaw stick for a radius, not a rate, so it reads
         # the axis unscaled — angular_z_scale would otherwise quietly change
@@ -375,7 +416,8 @@ class JoyToCmdVelNode(Node):
             self._logged_mode = mode
 
         vx, vy, wz = build_twist(
-            mode, vx, vy, wz, steer, self.max_curvature, self.angle_probe_speed)
+            mode, vx, vy, wz, steer, self.max_curvature, self.angle_probe_speed,
+            vy_enabled)
 
         granny = self.active_granny(msg.buttons)
         if granny != self._logged_granny:

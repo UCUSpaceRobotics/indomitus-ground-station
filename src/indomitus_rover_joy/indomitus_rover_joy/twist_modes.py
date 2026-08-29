@@ -33,8 +33,22 @@ MODES = (MODE_ROW, MODE_CURVATURE)
 STOPPED_SPEED = 1e-3
 
 
-def row_twist(vx, vy, wz):
-    """Yaw straight off the stick. The identity case, kept for symmetry."""
+def swerve_wz_correction(vx, wz):
+    """Mirror yaw while reversing, so the rover steers like a car.
+
+    Only meaningful with strafe off. With vy available the operator can hold a
+    heading independently and the raw yaw is what they want; without it, the
+    yaw stick is the only way to point the rover, and a stick that turns the
+    same way going backwards as forwards fights the operator the moment they
+    reverse out of anything.
+    """
+    return -float(wz) if float(vx) < -1e-3 else float(wz)
+
+
+def row_twist(vx, vy, wz, vy_enabled=True):
+    """Yaw straight off the stick, with the reverse mirror when strafe is off."""
+    if not vy_enabled:
+        wz = swerve_wz_correction(vx, wz)
     return float(vx), float(vy), float(wz)
 
 
@@ -67,7 +81,8 @@ def curvature_twist(vx, vy, steer, max_curvature, angle_probe_speed):
     return vx, vy, v_signed * target_curvature
 
 
-def build_twist(mode, vx, vy, wz, steer, max_curvature, angle_probe_speed):
+def build_twist(mode, vx, vy, wz, steer, max_curvature, angle_probe_speed,
+                vy_enabled=True):
     """Dispatch on mode, defaulting to row for anything unrecognised.
 
     An unknown mode string resolves to row rather than raising: this runs per
@@ -76,8 +91,10 @@ def build_twist(mode, vx, vy, wz, steer, max_curvature, angle_probe_speed):
     stops the Twist stream and coasts the rover.
     """
     if mode == MODE_CURVATURE:
+        # No correction here: curvature already derives yaw from signed speed,
+        # so reversing mirrors the arc on its own.
         return curvature_twist(vx, vy, steer, max_curvature, angle_probe_speed)
-    return row_twist(vx, vy, wz)
+    return row_twist(vx, vy, wz, vy_enabled)
 
 
 def apply_granny(vx, vy, wz, scale, enabled):

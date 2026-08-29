@@ -156,6 +156,12 @@ function defaults() {
     driveModeBind: { source: 'switches', index: -1 },
     /** Steering mode used when no switch is bound, and the fallback when one is. */
     twistMode: 'row',
+    /**
+     * Strafe. Off by default, matching the rover: with vy live a diagonal
+     * stick crabs instead of turning, which is not how most driving is done.
+     */
+    vyBind: { source: 'switches', index: -1 },
+    vyEnabled: false,
     /** Everything scaled down for fine work. */
     grannyBind: { source: 'switches', index: -1 },
     grannyMode: false,
@@ -265,6 +271,8 @@ function normalize(raw) {
     functionBinds: normalizeBinds(merged.functionBinds),
     driveModeBind: normalizeModeBind(merged.driveModeBind),
     twistMode: merged.twistMode === 'curvature' ? 'curvature' : 'row',
+    vyBind: normalizeModeBind(merged.vyBind),
+    vyEnabled: Boolean(merged.vyEnabled),
     grannyBind: normalizeModeBind(merged.grannyBind),
     grannyMode: Boolean(merged.grannyMode),
     muteBind: normalizeModeBind(merged.muteBind),

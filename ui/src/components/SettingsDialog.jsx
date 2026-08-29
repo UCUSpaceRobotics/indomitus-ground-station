@@ -23,6 +23,13 @@ import { usePanelButtons } from '../hooks/usePanelButtons';
 /** An index below zero is a bind whose control was taken by something else. */
 const UNBOUND = -1;
 
+/** Console mode -> the config flag holding its unbound/fallback value. */
+const MODE_FLAGS = {
+  vyBind: 'vyEnabled',
+  grannyBind: 'grannyMode',
+  muteBind: 'mute',
+};
+
 /**
  * How long the camera table sits still before it is written back to the config.
  * Long enough that typing a topic does not tear the stream down on every
@@ -256,6 +263,14 @@ export default function SettingsDialog({ open, onClose }) {
         + 'strafing and precise placement want.',
     },
     {
+      key: 'vyBind',
+      name: 'Strafe (vy)',
+      calls: 'sideways motion',
+      hint: 'Off by default, as on the rover. With strafe live a diagonal stick crabs '
+        + 'instead of turning. While it is off, row mode also mirrors yaw in reverse so '
+        + 'the rover steers like a car.',
+    },
+    {
       key: 'grannyBind',
       name: 'Granny mode',
       calls: 'speed \u00d70.1',
@@ -349,6 +364,9 @@ export default function SettingsDialog({ open, onClose }) {
           ['twist_mode', draft.twistMode, 'string'],
           ['twist_mode_switch_source', draft.driveModeBind.source, 'string'],
           ['twist_mode_switch_index', draft.driveModeBind.index, 'int'],
+          ['vy_enabled', draft.vyEnabled, 'bool'],
+          ['vy_switch_source', draft.vyBind.source, 'string'],
+          ['vy_switch_index', draft.vyBind.index, 'int'],
           ['granny_mode', draft.grannyMode, 'bool'],
           ['granny_switch_source', draft.grannyBind.source, 'string'],
           ['granny_switch_index', draft.grannyBind.index, 'int'],
@@ -386,6 +404,8 @@ export default function SettingsDialog({ open, onClose }) {
     draft.driveNode,
     draft.driveModeBind,
     draft.twistMode,
+    draft.vyBind,
+    draft.vyEnabled,
     draft.grannyBind,
     draft.grannyMode,
     draft.muteBind,
@@ -764,14 +784,11 @@ export default function SettingsDialog({ open, onClose }) {
                       ) : (
                         <input
                           type="checkbox"
-                          checked={Boolean(
-                            mode.key === 'grannyBind' ? draft.grannyMode : draft.mute,
-                          )}
+                          checked={Boolean(draft[MODE_FLAGS[mode.key]])}
                           onChange={(event) =>
                             setDraft((prev) => ({
                               ...prev,
-                              [mode.key === 'grannyBind' ? 'grannyMode' : 'mute']:
-                                event.target.checked,
+                              [MODE_FLAGS[mode.key]]: event.target.checked,
                             }))
                           }
                         />

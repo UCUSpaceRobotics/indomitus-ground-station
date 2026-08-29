@@ -20,6 +20,7 @@ from indomitus_rover_joy.twist_modes import (
     clamp_linear,
     curvature_twist,
     row_twist,
+    swerve_wz_correction,
 )
 
 CURV = 2.0
@@ -158,3 +159,34 @@ def test_granny_preserves_the_arc():
 def test_granny_preserves_heading():
     vx, vy, _ = apply_granny(0.3, 0.4, 0.0, 0.1, True)
     assert vy / vx == pytest.approx(4 / 3)
+
+
+# ── strafe off: the reverse mirror ───────────────────────────────────────────
+
+def test_vy_on_leaves_yaw_alone_in_reverse():
+    # With strafe available the operator can hold a heading independently, so
+    # the raw yaw is what they asked for.
+    assert row_twist(-0.5, 0.0, 0.7, True)[2] == pytest.approx(0.7)
+
+
+def test_vy_off_mirrors_yaw_in_reverse():
+    # Without strafe the yaw stick is the only way to point the rover, and a
+    # stick that turns the same way backwards as forwards fights the operator
+    # reversing out of anything.
+    assert row_twist(-0.5, 0.0, 0.7, False)[2] == pytest.approx(-0.7)
+
+
+def test_vy_off_leaves_yaw_alone_going_forward():
+    assert row_twist(0.5, 0.0, 0.7, False)[2] == pytest.approx(0.7)
+
+
+def test_the_mirror_has_a_deadband_around_stationary():
+    # Otherwise yaw flips sign on noise while the rover is standing still.
+    assert swerve_wz_correction(-1e-4, 0.7) == pytest.approx(0.7)
+
+
+def test_curvature_needs_no_mirror():
+    # It already derives yaw from signed speed, so reversing mirrors the arc on
+    # its own; correcting again would cancel that back out.
+    args = (-0.5, 0.0, 0.9, 0.9, CURV, PROBE)
+    assert build_twist(MODE_CURVATURE, *args, False) == build_twist(MODE_CURVATURE, *args, True)
