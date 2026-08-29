@@ -14,7 +14,7 @@ services:
     privileged: true
 
     environment:
-      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-90}
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-42}
       - ROS_LOCALHOST_ONLY=0
       - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
       - FASTRTPS_DEFAULT_PROFILES_FILE=/work/docker/fastdds_rover_link.xml

@@ -186,6 +186,42 @@ to the `ht40` variant and look like a driver limitation. If you see 300 rather
 than 400, check `cat /run/rover-ap-variant` before blaming the chipset: it
 records which config actually came up.
 
+### The rover Nano's Alfa is still in USB 2.0 mode
+
+Measured 2026-08-29 on the Nano that replaced the Orin: **57 Mbit/s down,
+54 up** (`iperf3`, cameras idle), with three MJPEG camera streams eating
+**22 Mbit/s — about 39% of the downlink**.
+
+The adapter is at **480M**, and `/etc/modprobe.d/` on that Nano has **no options
+set at all**: `rtw_switch_usb_mode=0`. So the single documented fix in the
+section below has simply never been applied to this host. `rtw_power_mgnt` is
+already 0, so power saving is not the problem here — the USB mode is.
+
+`mast/8812au-usb3.conf` is the drop-in, and `mast/alfa-usb3.sh --apply` installs
+it. **Do not copy it into place by hand.** Switching USB mode re-enumerates the
+adapter, the adapter is the only route into this rover, and unlike the Orin this
+Nano has **no wired lifeline** (`10.45.0.51` does not answer). The script
+therefore arms a detached self-revert on the Nano *before* it changes anything,
+and only `--keep` cancels it.
+
+Two things differ from the old rover and matter for recovery:
+
+- the AP here is **NetworkManager**, connection `Hotspot` (mode=ap,
+  autoconnect=yes) — not `hostapd`/`rover-ap.service`. The `10.44.0.0/24` return
+  route is a static route *on that connection*, so both come back together when
+  NM re-activates it;
+- **do not reach for the morrownr driver on this box.** Its repo now requires
+  kernels **5.10-7.0** and tests gcc 12-15; this Nano is **4.9.201-tegra** with
+  gcc 7.5. The repo `mast/README.md` used to name, `morrownr/8812au-20210629`,
+  no longer exists — it was folded into `8812au-20210820`. The 52 → 108 Mbit/s
+  figure below was measured on the **Orin** (L4T R36, kernel 5.15) and is not a
+  promise about this hardware. DKMS itself is healthy here
+  (`realtek-rtl88xxau 5.6.4.2` is built against 4.9.201-tegra), so the toolchain
+  is not the obstacle — the source is.
+
+Judge the result by stability, not just by the link coming back: SuperSpeed on
+this board is what wrecks the cameras, and an unstable radio link is a failure.
+
 ### Two things that quietly cost most of the throughput
 
 **NetworkManager must not manage the AP radio.** Without
@@ -378,6 +414,137 @@ The profile bakes in literal addresses (Fast DDS 2.6 accepts no CIDR), so
 
 Both failure modes look like success at first glance: discovery reports correct
 types, QoS and publisher counts while `ros2 topic hz` is silent on every topic.
+
+### The Nano's camera is deliberately outside all of this
+
+The Jetson now at `10.42.0.1` is a **Nano 4GB on JetPack 4.5.1** — Ubuntu
+18.04.6, kernel `4.9.201-tegra`, L4T R32.5.2, login `jetson`. **ROS 2 Humble has
+no binaries for 18.04**, so nothing in this section applies to it: no
+`v4l2_camera_node`, no DDS profile, no topic to whitelist. This is the whole
+difference from the Orin NX, where the arducams were ordinary ROS topics.
+
+The cameras are **Arducam B0495 (USB3 2.3MP)**, driverless UVC, so `uvcvideo`
+handles them. `mast/nano-camera.sh` discovers every capture-capable
+`/dev/video*`, deploys `mast/nano_mjpeg.py`, and starts **one server process per
+camera** — first on **port 8090**, each further one on the next port up. Not
+8080: `web_video_server` owns that on the GS. A UI camera row takes each URL
+directly; see "Cameras outside ROS" in `ui/README.md`.
+
+One process per camera on purpose: these cameras wedge (see the USB note below),
+and a process per feed means a wedged camera takes down only its own stream and
+can be restarted with `--dev /dev/videoN` without interrupting the others. It
+also puts each encode on its own core. Two cameras at 960x600@10 measured ~22%
+and ~21% of a core.
+
+Node numbers are **not stable across replugs** — `/dev/video0` and `/dev/video1`
+swap around — so the script rediscovers them every run rather than remembering
+them, and reports each camera's USB path and link speed alongside its port.
+
+**USB speed decides what the camera offers**, and the two lists share no frame
+rate, which is a trap when re-cabling:
+
+| Speed | Modes |
+|---|---|
+| 480M (USB 2.0) | 960x600 @ 10 — and nothing else |
+| 5000M (USB 3.0) | 1920x1200 @ 50/30/15, 960x600 @ 80/60/30/15 — **no 10** |
+
+Neither offers MJPEG, so the Nano always JPEG-encodes in software. That encode
+is single-threaded: 960x600@10 measured **23% of one core**, so 960x600@30 is
+~70% and 1920x1200 at any usable rate is out of reach without NVJPEG or a
+threaded encoder. `nano_mjpeg.py` snaps a requested mode onto one the camera
+actually has and logs the substitution, so a stale `--fps` degrades instead of
+failing silently.
+
+> **SuperSpeed does not survive an external hub chain here.** Behind two
+> external hubs (`2-1.2.3.2`) the camera enumerates at 5000M and then fails
+> every transfer with `-71` (EPROTO). Two symptoms, depending on how far it
+> gets: `Failed to set UVC probe control` then `can't set config #1`, leaving no
+> `/dev/video*` node at all; or, if it does open, `Non-zero status (-71) in
+> video completion handler` — which reaches the operator as **flat green frames
+> with the occasional real one**, because an unfilled YUYV buffer decodes to
+> green. Unbind/rebind and an `authorized` re-enumeration do **not** clear a
+> wedged device; only a physical power cycle does.
+>
+> **Read the sysfs path, not the socket you think you used.** This is an NVIDIA
+> Jetson Nano Developer Kit, and its four USB3-A sockets hang off a VIA Labs hub
+> soldered to the board (`2109:0817`, at `2-1`). So a camera plugged straight
+> into the Nano still reads **`2-1.N` — one dot**, and that is what "direct"
+> looks like here. More dots than that are external hubs:
+>
+> ```
+> 2-1              VIA Labs      onboard, unavoidable
+>  └─ 2-1.2           Realtek    external hub #1
+>      └─ 2-1.2.3        Realtek external hub #2
+>          └─ 2-1.2.3.2  Arducam
+> ```
+>
+> `nano-camera.sh` counts the external hubs per camera and warns. Note the same
+> chain at 480M was completely stable — the whole rover harness (Alfa, CAN,
+> cdc_acm) runs through it on bus 1 — so the fault appears only once SuperSpeed
+> is negotiated.
+>
+> **Removing the hubs is not sufficient.** A camera plugged straight into the
+> Nano at `2-1.1`, hub-free at 5000M, still logged 824 `-71` errors in one boot
+> with the kernel repeatedly issuing `reset SuperSpeed USB device`. It served
+> frames — 19 fps against a requested 30, with visible errors — rather than
+> failing outright, which is a worse failure mode because it looks like it
+> works. Tegra's xHCI and this Cypress FX3 bridge are simply unreliable together
+> at SuperSpeed. After enough resets the device fell back to 480M on bus 1 on
+> its own, and has been faultless since: **0 errors, 9.8 fps, and the `-71`
+> counter frozen.**
+>
+> **So: run these cameras at USB 2.0 here.** The cost is real but small —
+> 960x600@10 instead of @30 — and 960x600 is what the rest of the rover's
+> arducams run anyway. USB 3.0 on this board is not worth the frame rate.
+>
+> `nano-camera.sh` therefore defaults every camera to the USB 2.0 mode, and
+> warns on any camera that came up at 5000M. It cannot *force* the link down:
+> kernel 4.9 on this Tegra exposes no per-port SuperSpeed disable, `authorized`
+> toggling just re-enumerates at 5000M, and unbinding the hub tree drops the
+> Wi-Fi link with it (the hubs are one device presenting on both buses — that
+> mistake cost a reboot). **Link speed is decided by the cable and the socket.**
+
+> **A wedged SuperSpeed camera leaves a ghost `/dev/video*` behind.** When the
+> device goes dark without a clean disconnect, the kernel never tears its node
+> down, so it keeps answering descriptors from cache while `VIDIOC_STREAMON`
+> returns EIO. The same physical camera then re-appears on the USB 2.0 wires as
+> a *second* node — three cameras, four nodes, the ghost and the real one on the
+> same physical socket (`2-1.2.3.2` and `1-2.2.3.2` are bus 2 and bus 1 views of
+> one port; compare `devnum`, the ghost is much older).
+>
+> This is worth more than tidiness: the ghost consumes a port, which shifts
+> every camera after it by one and silently breaks the UI tile mapping. So
+> `nano-camera.sh` requires one real captured frame from a node before it will
+> serve it, rather than trusting enumeration.
+
+> **Enforcing USB 2.0: `mast/99-arducam-no-superspeed.rules`.** Deauthorising a
+> camera's SuperSpeed instance (`echo 0 > .../authorized`) removes its node
+> cleanly, leaves the 480M feeds untouched and does not disturb the link —
+> unlike unbinding the hub tree, which drops the Wi-Fi with it. The udev rule
+> does that automatically for `04b4:4950` at `ATTR{speed}=="5000"`.
+>
+> Proven: it removes the stale SuperSpeed twin a wedged camera leaves behind.
+> Not proven: that a camera whose *only* enumeration is SuperSpeed will re-train
+> at High Speed rather than simply vanishing. If a camera disappears after
+> installing this, that is the case you hit; the fix is a USB 2.0 cable, and the
+> rule is one file to delete.
+>
+> Note the node numbers move across reboots — `/dev/video0` was `1-2.3` before
+> one reboot and `1-2.1` after — so read the USB path, never the node number,
+> when deciding which camera is which.
+
+`mjpg-streamer` was tried first and rejected. It builds here — `libv4l-dev` is
+the non-obvious dependency — but segfaults inside `input_uvc` before it opens
+the device. Its one advantage, relaying MJPEG untouched, does not apply to a
+camera that offers no MJPEG. `nano_mjpeg.py` needs nothing installed: the OpenCV
+and numpy that ship with JetPack are enough, so it needs no apt and no sudo.
+
+If that camera ever has to be a real ROS topic, the route is a container, and
+the image is `dustynv/ros:humble-ros-base-l4t-r32.7.1` — Humble built from
+source on an L4T r32 base. Do **not** reach for a stock Jammy image: on kernel
+4.9 it dies with `error adding seccomp filter rule for syscall clone3`, which on
+JetPack 4.6 also appears after an `apt upgrade` bumps docker, and is pinned back
+with `docker.io=20.10.7-0ubuntu1~18.04.2`.
 
 ## What lives where
 

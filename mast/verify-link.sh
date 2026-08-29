@@ -16,9 +16,11 @@
 set -u
 
 PI=admin@10.44.0.1
-ROVER_WIFI=indomitus-rover@10.42.0.1
-ROVER_LIFELINE=indomitus-rover@10.45.0.51
+ROVER_USER=${ROVER_USER:-jetson}
+ROVER_WIFI=$ROVER_USER@10.42.0.1
+ROVER_LIFELINE=$ROVER_USER@10.45.0.51
 ROVER_PW=${ROVER_PW:-}
+GS_MAST_IF=eno1
 
 PI_ALFA=wlx00c0caba8237
 ROVER_ALFA=wlx00c0caba86c1
@@ -27,7 +29,8 @@ INTEL_MAC=74:04:f1:bc:7f:0f
 
 fails=0
 SSH="ssh -o BatchMode=yes -o ConnectTimeout=8"
-ROVER=""   # resolved by locate_rover
+ROVER=""        # resolved by locate_rover
+ROVER_HINT=""   # why locate_rover failed, when it can tell
 
 # ---------------------------------------------------------------- reporting --
 
@@ -63,10 +66,22 @@ rover_root() {
     printf '%s\n' "$ROVER_PW" | $SSH "$ROVER" "sudo -S -p '' $*" 2>/dev/null
 }
 
+# The rover drops ICMP, so reachability is probed on tcp/22 rather than by ping.
+#
+# Note $SSH runs BatchMode, which disables password auth outright: ROVER_PW only
+# ever reaches `sudo -S` on the far side, never the login itself. So a rover that
+# is up with no installed key fails here, and the fix is ssh-copy-id, not a
+# password. Saying which of the two happened saves chasing the network for what
+# is really a missing key or a wrong username.
 locate_rover() {
+    local target host reachable=""
     for target in "$ROVER_LIFELINE" "$ROVER_WIFI"; do
+        host=${target#*@}
+        timeout 4 bash -c "exec 3<>/dev/tcp/$host/22" 2>/dev/null || continue
+        reachable=$target
         if $SSH "$target" true 2>/dev/null; then ROVER=$target; return 0; fi
     done
+    [ -n "$reachable" ] && ROVER_HINT="sshd up at ${reachable#*@}, no key for $ROVER_USER - run: ssh-copy-id $reachable"
     return 1
 }
 
@@ -75,10 +90,9 @@ locate_rover() {
 check_gs() {
     head_ "GS PC"
 
-    # eno1 must not hold enp2s0's address. gs-mast has no bound device, so if it
-    # autoconnects it grabs eno1 and assigns a duplicate 10.44.0.10 at a lower
-    # metric - traffic for the Pi then goes out the rover's cable and the mast
-    # becomes unreachable. This has bitten once already.
+    # gs-mast and gs-mast-p2 both carry 10.44.0.10/24, so only one may autoconnect
+    # or traffic for the Pi leaves by whichever cable won the metric. This is the
+    # check that actually guards that, and it is the one to trust.
     local dupes
     dupes=$(ip -br addr | grep -c '10\.44\.0\.10/24')
     if [ "$dupes" -le 1 ]; then
@@ -86,14 +100,18 @@ check_gs() {
     else
         fail "no duplicate 10.44.0.10" "$dupes interfaces share it - check gs-mast autoconnect"
     fi
-    check "gs-mast autoconnect off" "no" "$(nmcli -t -f NAME,AUTOCONNECT con show 2>/dev/null | awk -F: '$1=="gs-mast"{print $2}')"
+    # gs-mast is bound to eno1 and is the profile that must win. gs-mast-p2 sits on
+    # enp2s0, whose receive path is dead: it links and negotiates 1000Mb/s while
+    # dropping everything inbound, so it must never come up on its own.
+    check "gs-mast autoconnect on" "yes" "$(nmcli -t -f connection.autoconnect con show gs-mast 2>/dev/null | cut -d: -f2)"
+    check "gs-mast-p2 autoconnect off" "no" "$(nmcli -t -f connection.autoconnect con show gs-mast-p2 2>/dev/null | cut -d: -f2)"
 
     # EEE on the GS transmit path costs 514 vs 887 Mbit/s to the Pi. Runtime
     # only - it does not survive a reboot.
     local eee
-    eee=$(ethtool --show-eee enp2s0 2>/dev/null | awk '/EEE status/{print $3}')
-    [ "$eee" = "disabled" ] && pass "enp2s0 EEE disabled" "$eee" \
-                            || warn "enp2s0 EEE disabled" "got '${eee:-?}' - not persistent, re-apply after reboot"
+    eee=$(ethtool --show-eee "$GS_MAST_IF" 2>/dev/null | awk '/EEE status/{print $3}')
+    [ "$eee" = "disabled" ] && pass "$GS_MAST_IF EEE disabled" "$eee" \
+                            || warn "$GS_MAST_IF EEE disabled" "got '${eee:-?}' - not persistent, re-apply after reboot"
 
     [ -x "$HOME/.local/bin/sync-mast-clock.sh" ] \
         && pass "mast clock sync script" "present" \
@@ -148,7 +166,7 @@ check_pi() {
 
 check_rover() {
     head_ "Rover"
-    if ! locate_rover; then fail "reachable" "no SSH via lifeline or Wi-Fi"; return; fi
+    if ! locate_rover; then fail "reachable" "${ROVER_HINT:-no tcp/22 via lifeline or Wi-Fi}"; return; fi
     pass "reachable" "via ${ROVER#*@} - $(rover 'uptime -p')"
 
     check "rtw88 driver loaded" "rtw_8812au" "$(rover 'lsmod | grep -oE "^rtw_8812au"')"

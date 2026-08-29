@@ -4,6 +4,10 @@ This repository contains the ground station software for the Indomitus Rover, sp
 
 ## Quick Start
 
+```bash
+docker compose -f docker/docker-compose.gs.yaml --project-directory . up -d
+```
+
 ### 1. Build and Start the Container
 By default the system expects two ESP32s: the **joystick board** at
 `/dev/ttyACM0` and the **button board** at `/dev/ttyACM1`.
@@ -234,9 +238,6 @@ telemetry, joystick command path and the rover log. It talks to ROS over
 Both are started by `gs.launch.py`, together with the serial boards and the mast
 link, so on the console there is nothing to start by hand:
 
-```bash
-docker compose -f docker/docker-compose.gs.yaml --project-directory . up -d
-```
 
 The root `docker-compose.yml` is the development counterpart: same image and
 same environment, but it launches nothing and leaves you a shell. Start pieces
