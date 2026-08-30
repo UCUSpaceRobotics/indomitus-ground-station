@@ -86,6 +86,17 @@ FUNCTIONS = (
     Function('light_red', 'Red light', '/lights/red', '/lights/red/toggle'),
     Function('light_green', 'Green light', '/lights/green', '/lights/green/toggle'),
     Function('light_blue', 'Blue light', '/lights/blue', '/lights/blue/toggle'),
+    # Rover power over the emergency radio, served by lora_gateway_node inside
+    # the /gs namespace - these are ground-station services, not rover ones.
+    #
+    # No absolute form for any of them, so they can only be bound to a
+    # MOMENTARY button. That is not a limitation, it is the hardware: the rover
+    # end pulses POWER_ON / POWER_OFF for 1 s and its power board latches its
+    # own state, so there is no held position to describe. Binding these to a
+    # latching switch would make it send "off" again on every release.
+    Function('rover_power_on', 'Rover power ON', '', '/gs/power/turn_on'),
+    Function('rover_power_off', 'Rover power OFF', '', '/gs/power/turn_off'),
+    Function('jetson_reboot', 'Reboot Jetson', '', '/gs/power/reboot_jetson'),
 )
 
 FUNCTIONS_BY_KEY = {f.key: f for f in FUNCTIONS}
