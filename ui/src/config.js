@@ -295,6 +295,37 @@ function emit() {
   for (const listener of listeners) listener();
 }
 
+/**
+ * Follow settings applied in another window.
+ *
+ * The console is not one page: `/`, `/left` and `/right` are opened as separate
+ * windows on separate screens, and each runs its own copy of this module with
+ * its own `current`. The Control box is only on the left monitor, while the
+ * settings dialog is usually driven from another one — so applying a bind
+ * updated the window that sent it and left the panel that labels the switches
+ * showing the previous wiring until someone reloaded it. From the operator's
+ * seat that is a bind the UI said it applied and then did not show.
+ *
+ * localStorage is the one thing the windows already share, and the browser
+ * fires `storage` in every *other* window of the origin when one writes, which
+ * `persist()` does on every update. Query params keep their precedence over
+ * the stored copy, the same order `current` is first built in — a window
+ * opened with ?ros=... must not lose it because another window saved.
+ */
+window.addEventListener?.('storage', (event) => {
+  if (event.key !== STORAGE_KEY || event.newValue === null) return;
+  let stored;
+  try {
+    stored = JSON.parse(event.newValue);
+  } catch {
+    // Another tab wrote something unparseable; keep what this window has.
+    return;
+  }
+  // No persist() here: this window is following a write, not making one.
+  current = normalize({ ...stored, ...readQuery() });
+  emit();
+});
+
 export function getConfig() {
   return current;
 }
