@@ -281,17 +281,23 @@ def test_each_board_is_bindable_to_its_last_control():
 @pytest.mark.parametrize('function, service', [
     ('spotlight', '/lights/spotlight'),
     ('beautiful', '/lights/beautiful'),
+    ('light_red', '/lights/red'),
+    ('light_green', '/lights/green'),
+    ('light_blue', '/lights/blue'),
 ])
-def test_the_lights_are_absolute_from_either_board(function, service):
-    """The rover's lighting node offers only the absolute form, so a bind on
-    the joystick board has to reach for it too. It used to prefer a toggle twin
-    that nothing advertises, and the console reported "not available".
+def test_every_light_offers_both_forms(function, service):
+    """A latching panel switch sends its position; the toggle twin is there
+    for anything that can only fire an edge. rover_lighting_node advertises
+    both for every light, so neither source is left without one.
     """
-    for source in (SOURCE_SWITCHES, SOURCE_JOY):
-        binds = binds_from_specs([
-            {'function': function, 'source': source, 'index': 3}])
-        assert binds[0].service == service
-        assert binds[0].kind == KIND_SETBOOL
+    absolute = binds_from_specs([
+        {'function': function, 'source': SOURCE_SWITCHES, 'index': 3}])
+    assert absolute[0].service == service
+    assert absolute[0].kind == KIND_SETBOOL
+
+    edge = binds_from_specs([{'function': function, 'source': SOURCE_JOY, 'index': 3}])
+    assert edge[0].service == f'{service}/toggle'
+    assert edge[0].kind == KIND_TRIGGER
 
 
 def test_no_function_offers_a_service_the_rover_does_not():
@@ -305,8 +311,11 @@ def test_no_function_offers_a_service_the_rover_does_not():
         '/drive/power', '/drive/power/toggle',
         '/drive/compact', '/drive/compact/toggle',
         '/drive/clear_errors',
-        '/lights/spotlight', '/lights/beautiful',
-        '/lights/red', '/lights/green', '/lights/blue',
+        '/lights/spotlight', '/lights/spotlight/toggle',
+        '/lights/beautiful', '/lights/beautiful/toggle',
+        '/lights/red', '/lights/red/toggle',
+        '/lights/green', '/lights/green/toggle',
+        '/lights/blue', '/lights/blue/toggle',
     }
     for function in FUNCTIONS:
         for source in (SOURCE_SWITCHES, SOURCE_JOY):

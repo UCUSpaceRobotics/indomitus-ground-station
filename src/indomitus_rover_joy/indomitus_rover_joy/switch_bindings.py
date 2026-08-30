@@ -78,23 +78,14 @@ FUNCTIONS = (
     Function('drive_compact', 'Drive compact', '/drive/compact', '/drive/compact/toggle'),
     # No absolute form: clearing a fault is an action, not a state.
     Function('drive_clear_errors', 'Clear drive errors', '', '/drive/clear_errors'),
-    # Absolute only. rover_peripherals/rover_lighting_node advertises exactly
-    # lights/spotlight, lights/beautiful and lights/traffic_light, all absolute
-    # — there are no toggle twins behind the lights the way there are behind
-    # drive_power. Naming one here made resolve() prefer it for anything bound
-    # to the joystick board, which then called a service nobody offers: the
-    # console warned "not available" and the light never came on. The joy
-    # board's 9 controls are latching switches anyway, so they have a position
-    # to send and lose nothing by going through SetBool.
-    Function('spotlight', 'Spotlight', '/lights/spotlight', ''),
-    Function('beautiful', 'Beautiful lights', '/lights/beautiful', ''),
-    # The tower's three lamps, one switch each. Absolute like the rest of the
-    # lights — rover_lighting_node offers no toggle twins. lights/traffic_light
-    # drives the same lamps as a bitmask, but a switch holds one lamp and knows
-    # nothing about the other two, so it cannot send a mask.
-    Function('light_red', 'Red light', '/lights/red', ''),
-    Function('light_green', 'Green light', '/lights/green', ''),
-    Function('light_blue', 'Blue light', '/lights/blue', ''),
+    Function('spotlight', 'Spotlight', '/lights/spotlight', '/lights/spotlight/toggle'),
+    Function('beautiful', 'Beautiful lights', '/lights/beautiful', '/lights/beautiful/toggle'),
+    # The tower's three lamps, one switch each. lights/traffic_light drives the
+    # same lamps together, but a console switch holds exactly one of them and
+    # cannot describe the other two, so each gets its own pair.
+    Function('light_red', 'Red light', '/lights/red', '/lights/red/toggle'),
+    Function('light_green', 'Green light', '/lights/green', '/lights/green/toggle'),
+    Function('light_blue', 'Blue light', '/lights/blue', '/lights/blue/toggle'),
 )
 
 FUNCTIONS_BY_KEY = {f.key: f for f in FUNCTIONS}
