@@ -24,7 +24,7 @@ docker compose exec indomitus_ground_station bash
 ### 3. Launch the Joystick Bridge
 Inside the container:
 ```bash
-ros2 launch indomitus_rover_joy joy.launch.py
+ros2 launch gs_joy joy.launch.py
 ```
 
 ## Configuration
@@ -48,7 +48,7 @@ to get stable `/dev/joy_board` and `/dev/button_board` symlinks.
 You can also override the ports directly when launching:
 
 ```bash
-ros2 launch indomitus_rover_joy joy.launch.py \
+ros2 launch gs_joy joy.launch.py \
     joy_board_port:=/dev/ttyUSB0 button_board_port:=/dev/ttyUSB1
 ```
 
@@ -126,7 +126,7 @@ so a typo cannot half-remap the arm — a button source on a stick slot, for
 instance, would publish a hard 0 or 1 as an axis value, which is full-speed arm
 motion from a toggle.
 
-Shipped defaults live in `src/indomitus_rover_joy/config/arm_bindings.yaml`.
+Shipped defaults live in `src/gs_joy/config/arm_bindings.yaml`.
 They are **placeholders**, exactly like `gs_bindings.yaml`: a plausible panel
 layout, not a measured one. Bind them against the real console before a run.
 
@@ -179,24 +179,24 @@ source install/setup.bash
 If you want to run nodes separately:
 
 ```bash
-ros2 run indomitus_rover_joy console_boards_node
-ros2 run indomitus_rover_joy arm_gamepad_node
-ros2 run indomitus_rover_joy joy_to_cmd_vel_node
-ros2 run indomitus_rover_joy joy_to_servo_node
+ros2 run gs_joy console_boards_node
+ros2 run gs_joy arm_gamepad_node
+ros2 run gs_joy joy_to_cmd_vel_node
+ros2 run gs_joy joy_to_servo_node
 ```
 
 ### Driving the Rover
 `joy_to_cmd_vel_node` turns `/joy` into `geometry_msgs/Twist`. It is a swerve
 rover, so `linear.y` is real — it can strafe sideways.
 
-**Publish to `/cmd_vel_ext`, not `/cmd_vel`.** On the rover `/cmd_vel` is the
+**Publish to `/cmd_vel_gs`, not `/cmd_vel`.** On the rover `/cmd_vel` is the
 *output* of `twist_mux`, which arbitrates three inputs (`rover_bringup/config/twist_mux.yaml`):
 
 | Input          | Priority | Source                        |
 | -------------- | -------- | ----------------------------- |
 | `cmd_vel_joy`  | 100      | onboard bluetooth gamepad     |
 | `cmd_vel_nav`  | 50       | Nav2                          |
-| `cmd_vel_ext`  | 10       | this ground station           |
+| `cmd_vel_gs`  | 10       | this ground station           |
 
 The launch file remaps accordingly. Lowest priority is deliberate: whoever holds
 the onboard gamepad can always override the remote console, and twist_mux drops
@@ -247,7 +247,7 @@ off:
 ```bash
 docker compose up -d
 docker compose exec indomitus_ground_station bash
-ros2 launch indomitus_rover_bringup gs.launch.py use_joy:=false use_comms:=false
+ros2 launch gs_bringup gs.launch.py use_joy:=false use_comms:=false
 ```
 
 The UI itself runs on the host, not in the container:
@@ -262,7 +262,7 @@ See `ui/README.md` for configuration and `ui/COMMANDS.md` for the full command
 list.
 
 ## Project Structure
-- `src/indomitus_rover_joy`: ROS 2 package for joystick serial bridge and message conversion.
-- `src/indomitus_rover_bringup`: Top-level launch configurations.
+- `src/gs_joy`: ROS 2 package for joystick serial bridge and message conversion.
+- `src/gs_bringup`: Top-level launch configurations.
 - `docker/`: Dockerfile and entrypoint scripts.
 - `ui/`: React operator console (rosbridge + web_video_server).

@@ -172,7 +172,7 @@ Two different things to test, and the order matters.
 ```bash
 # T4, in the container
 source /opt/ws/install/setup.bash
-ros2 launch indomitus_rover_comms comms.launch.py     # if not already running
+ros2 launch gs_comms comms.launch.py     # if not already running
 
 ros2 param set /link_status_node force_path LORA      # relay over the radio
 ros2 topic echo --once /link/active_path              # expect LORA

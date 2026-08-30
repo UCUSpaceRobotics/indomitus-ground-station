@@ -1,7 +1,7 @@
 /**
  * Rover capabilities the console can be wired to.
  *
- * Mirrors FUNCTIONS in indomitus_rover_joy/switch_bindings.py. Two copies,
+ * Mirrors FUNCTIONS in gs_joy/switch_bindings.py. Two copies,
  * because this dialog cannot import Python and neither side is worth a
  * code-generation step — keep them in step by hand. The node validates
  * whatever this sends and rejects the whole set if a key is unknown, so a

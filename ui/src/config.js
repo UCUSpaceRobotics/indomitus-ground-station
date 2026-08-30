@@ -42,7 +42,7 @@ const nanoCamera = (port) => `http://${NANO_HOST}:${port}/?action=stream`;
 /**
  * `group` decides which monitor a camera lands on, replacing the old
  * "slice the array by index" coupling.
- * `switchIndex` is the bit in /switches (from console_boards) that gates it.
+ * `switchIndex` is the bit in /gs/switches (from console_boards) that gates it.
  */
 export const DEFAULT_CAMERAS = [
   // Two kinds of entry live here.
@@ -95,12 +95,18 @@ export function placeholderFor(camera) {
   return PLACEHOLDER_BY_ID[camera.id] ?? PLACEHOLDER_BY_TOPIC[camera.topic] ?? null;
 }
 
-/** Topics the panels read. Overridable so the UI can follow a remapped rover. */
+/**
+ * Topics the panels read. Overridable so the UI can follow a remapped rover.
+ *
+ * switches/joy/joyRaw live under the gs_bringup /gs namespace. armJoy,
+ * cmdVel and servoTwist are deliberately absolute — they're where the gs
+ * nodes hand off to the rover/arm side, so they stay outside /gs on both ends.
+ */
 export const DEFAULT_TOPICS = {
-  switches: '/switches',
-  joy: '/joy',
+  switches: '/gs/switches',
+  joy: '/gs/joy',
   /** Uncalibrated 0..1000 stick values — what the calibration wizard reads. */
-  joyRaw: '/joy/raw',
+  joyRaw: '/gs/joy/raw',
   /** The console dressed as an SDL gamepad, which is what the arm reads. */
   armJoy: '/arm/joy',
   cmdVel: '/cmd_vel',
@@ -136,13 +142,13 @@ function defaults() {
     cameras: DEFAULT_CAMERAS,
     topics: DEFAULT_TOPICS,
     /** Node the calibration wizard reconfigures, for its parameter services. */
-    joyNode: '/console_boards',
+    joyNode: '/gs/console_boards',
     /** Node the arm-mapping page reconfigures. */
-    armNode: '/arm_gamepad',
+    armNode: '/gs/arm_gamepad',
     /** Node that turns console switches into rover service calls. */
-    interpreterNode: '/gs_interpreter',
-    /** Node that turns the sticks into /cmd_vel_ext, for the steering mode. */
-    driveNode: '/joy_to_cmd_vel_node',
+    interpreterNode: '/gs/gs_interpreter',
+    /** Node that turns the sticks into /cmd_vel_gs, for the steering mode. */
+    driveNode: '/gs/joy_to_cmd_vel_node',
     /**
      * Console control -> rover function. The node is authoritative once these
      * are applied; this copy is the editing draft, so the dialog opens on what

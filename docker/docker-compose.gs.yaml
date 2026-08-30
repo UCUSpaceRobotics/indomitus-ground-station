@@ -80,7 +80,7 @@ services:
     # entrypoint.bash regenerates the DDS profile, builds the workspace if the
     # sources moved, then execs this.
     command: >
-      ros2 launch indomitus_rover_bringup gs.launch.py
+      ros2 launch gs_bringup gs.launch.py
       use_joy:=${GS_USE_JOY:-true}
       use_comms:=${GS_USE_COMMS:-true}
       use_rosbridge:=${GS_USE_ROSBRIDGE:-true}
