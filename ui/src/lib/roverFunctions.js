@@ -32,6 +32,19 @@ export const ROVER_FUNCTIONS = [
   { key: 'light_red', label: 'Red light', group: 'Lights', setbool: '/lights/red', trigger: '/lights/red/toggle' },
   { key: 'light_green', label: 'Green light', group: 'Lights', setbool: '/lights/green', trigger: '/lights/green/toggle' },
   { key: 'light_blue', label: 'Blue light', group: 'Lights', setbool: '/lights/blue', trigger: '/lights/blue/toggle' },
+  // Rover power over the emergency radio, served by lora_gateway_node. These
+  // live under /gs because they are ground-station services, not rover ones —
+  // the console talks to its own e-stop board over USB and that board talks to
+  // the rover.
+  //
+  // None of the three has an absolute form, and that is the hardware talking,
+  // not an omission: the rover end pulses POWER_ON / POWER_OFF for 1 s and its
+  // power board latches its own state, so there is no held position for a
+  // switch to describe. Binding one of these to a latching switch would fire
+  // it again on every release.
+  { key: 'rover_power_on', label: 'Rover power ON', group: 'Rover power', setbool: '', trigger: '/gs/power/turn_on' },
+  { key: 'rover_power_off', label: 'Rover power OFF', group: 'Rover power', setbool: '', trigger: '/gs/power/turn_off' },
+  { key: 'jetson_reboot', label: 'Reboot Jetson', group: 'Rover power', setbool: '', trigger: '/gs/power/reboot_jetson' },
 ];
 
 export const FUNCTIONS_BY_KEY = Object.fromEntries(
