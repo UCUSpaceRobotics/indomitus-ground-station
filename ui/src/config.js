@@ -253,6 +253,32 @@ function migrateJoyNode(name, fallback) {
   return LEGACY_JOY_NODES.includes(name) ? fallback : name;
 }
 
+/**
+ * Console-board topics that moved under the /gs namespace when gs_bringup
+ * started pushing one.
+ *
+ * Saved topics override DEFAULT_TOPICS, so a console that stored its settings
+ * before that refactor keeps subscribing to the old absolute names. Nothing
+ * publishes them any more, and the failure is silent in the worst way:
+ * rosbridge connects, the header says "Connected", and every stick and switch
+ * panel just stays empty with no error anywhere. Keyed by setting, so a value
+ * that only *looks* legacy under some other key is left alone.
+ */
+const LEGACY_TOPICS = {
+  switches: { '/switches': '/gs/switches' },
+  joy: { '/joy': '/gs/joy' },
+  joyRaw: { '/joy/raw': '/gs/joy/raw' },
+};
+
+function migrateTopics(saved) {
+  const out = { ...DEFAULT_TOPICS };
+  for (const [key, value] of Object.entries(saved || {})) {
+    if (typeof value !== 'string' || !value) continue;
+    out[key] = LEGACY_TOPICS[key]?.[value] ?? value;
+  }
+  return out;
+}
+
 function normalize(raw) {
   const base = defaults();
   const merged = { ...base, ...raw };
@@ -265,7 +291,7 @@ function normalize(raw) {
     videoWidth: Math.max(0, Number(merged.videoWidth) || 0),
     theme: merged.theme === 'light' ? 'light' : 'dark',
     cameras: normalizeCameras(merged.cameras),
-    topics: { ...DEFAULT_TOPICS, ...(merged.topics || {}) },
+    topics: migrateTopics(merged.topics),
     // serial_joy_node and switch_reader_node were merged into one node. A
     // console that saved its settings before that has the old name in
     // localStorage, and pointing the wizard at a node that no longer exists
