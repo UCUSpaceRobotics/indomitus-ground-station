@@ -445,6 +445,26 @@ export default function SettingsDialog({ open, onClose }) {
         return;
       }
 
+      // The node has taken them, so this is the live wiring now — commit it to
+      // the config the panels read. Applying is its own gesture, separate from
+      // closing the dialog, and until this the control box went on showing the
+      // previous labels beside a switch the rover had just been told about,
+      // which reads as the bind not having taken at all.
+      //
+      // Before save_bindings on purpose: that only writes the YAML back, and
+      // failing to persist does not make the binds any less live.
+      updateConfig({
+        functionBinds: draft.functionBinds,
+        driveModeBind: draft.driveModeBind,
+        twistMode: draft.twistMode,
+        vyBind: draft.vyBind,
+        vyEnabled: draft.vyEnabled,
+        grannyBind: draft.grannyBind,
+        grannyMode: draft.grannyMode,
+        muteBind: draft.muteBind,
+        mute: draft.mute,
+      });
+
       const saved = await callService(
         `${draft.interpreterNode}/save_bindings`,
         'std_srvs/srv/Trigger',
