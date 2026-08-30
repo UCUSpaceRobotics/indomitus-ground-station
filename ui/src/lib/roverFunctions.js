@@ -79,6 +79,28 @@ export function functionLabel(bind) {
 export const SOURCE_LIMITS = { [SOURCE_SWITCHES]: 23, [SOURCE_JOY]: 9 };
 
 /**
+ * An index that exists on `source`, for a bind being moved between boards.
+ *
+ * The boards are different widths — 23 against 9 — so switch 12 has no
+ * counterpart on the joystick board. Moving a bind across has to land it
+ * somewhere real: past the end, the panel draws no row to label it and the
+ * node never sees that index in a frame, so the function goes quiet.
+ *
+ * Clamps rather than unbinds. Unbinding looked safer — it refuses to guess
+ * which control was meant — but the settings row only shows its source and
+ * index pickers while the bind *is* bound, so dropping the index took the
+ * pickers away with it and the operator's choice of board appeared to be
+ * refused outright. Clamping keeps the row editable so they can pick the
+ * control they actually want, and nothing is lost by guessing: crossing to
+ * another board means a different physical switch whatever we choose.
+ */
+export function fitIndexToSource(source, index) {
+  if (index < 0) return -1;
+  const last = SOURCE_LIMITS[source] - 1;
+  return index > last ? last : index;
+}
+
+/**
  * The one console control that is not bindable: joy[0] picks who the sticks
  * belong to. joy_to_cmd_vel_node drives while it reads 0, joy_to_servo_node
  * jogs the arm while it reads 1 — both nodes' `mode_switch_index`. It is

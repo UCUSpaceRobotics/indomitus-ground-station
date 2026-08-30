@@ -16,6 +16,7 @@ import {
   SOURCE_JOY,
   SOURCE_LIMITS,
   SOURCE_SWITCHES,
+  fitIndexToSource,
   resolveCall,
 } from '../lib/roverFunctions';
 import { usePanelButtons } from '../hooks/usePanelButtons';
@@ -212,21 +213,12 @@ export default function SettingsDialog({ open, onClose }) {
       ),
     }));
 
-  // An index only means something on its own board: the joystick board has 9
-  // controls, the button board 23. Moving a bind between them therefore has to
-  // let go of an index the new board does not have. Clamping it to the last
-  // control would quietly bind a different switch; keeping it leaves the bind
-  // past the end of the board, where the panel never draws a row to label and
-  // the node never sees the index in a frame — a function that looks bound and
-  // does nothing. Unbind it instead, so the operator is asked to pick again.
-  const fitIndex = (source, index) => (index < SOURCE_LIMITS[source] ? index : UNBOUND);
-
   const patchBind = (index, patch) => {
     let next = patch;
     if (patch.index !== undefined || patch.source !== undefined) {
       const current = draft.functionBinds[index];
       const source = patch.source ?? current.source;
-      const wanted = fitIndex(source, patch.index ?? current.index);
+      const wanted = fitIndexToSource(source, patch.index ?? current.index);
       next = { ...patch, index: wanted };
       if (wanted >= 0) claimControl(source, wanted, index);
     }
@@ -285,7 +277,7 @@ export default function SettingsDialog({ open, onClose }) {
       invert: false,
       ...patch,
     };
-    bind.index = fitIndex(bind.source, bind.index);
+    bind.index = fitIndexToSource(bind.source, bind.index);
     if (bind.index >= 0) claimControl(bind.source, bind.index, -1);
     setDraft((prev) => ({ ...prev, functionBinds: [...prev.functionBinds, bind] }));
   };
@@ -302,6 +294,7 @@ export default function SettingsDialog({ open, onClose }) {
       ...prev,
       functionBinds: prev.functionBinds.filter((b) => b.function !== key),
     }));
+
 
   /**
    * Console modes are not rover services, so they are not function binds: each
@@ -351,7 +344,7 @@ export default function SettingsDialog({ open, onClose }) {
   const setModeBind = (key, patch) =>
     setDraft((prev) => {
       const next = { ...prev[key], ...patch };
-      return { ...prev, [key]: { ...next, index: fitIndex(next.source, next.index) } };
+      return { ...prev, [key]: { ...next, index: fitIndexToSource(next.source, next.index) } };
     });
 
   // Press-to-bind, the same gesture as the arm mapping page. While a function
