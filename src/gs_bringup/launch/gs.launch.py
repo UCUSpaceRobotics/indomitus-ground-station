@@ -23,11 +23,11 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import EnvironmentVariable, LaunchConfiguration
-from launch_ros.actions import Node
+from launch_ros.actions import Node, PushRosNamespace
 
 
 def generate_launch_description():
@@ -69,71 +69,78 @@ def generate_launch_description():
             default_value=EnvironmentVariable('VIDEO_SERVER_PORT', default_value='8080'),
             description='HTTP port web_video_server serves MJPEG on'),
 
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(joy_launch),
-            condition=IfCondition(use_joy),
-        ),
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(comms_launch),
-            condition=IfCondition(use_comms),
-        ),
+        # Everything below is ground-station-owned, so it lives under /gs: it
+        # keeps `ros2 node list`/`topic list` readable once the rover (and its
+        # own un-namespaced nodes) is on the same graph.
+        GroupAction([
+            PushRosNamespace('gs'),
 
-        # Bound to every interface on purpose: the console laptop serves the UI
-        # and a second machine on the same switch opens it, which is how the
-        # team actually operates. An empty address is rosbridge's own "all".
-        Node(
-            package='rosbridge_server',
-            executable='rosbridge_websocket',
-            name='rosbridge_websocket',
-            condition=IfCondition(use_rosbridge),
-            parameters=[{
-                'port': rosbridge_port,
-                'address': '',
-                # Camera frames over rosbridge are large; the stock 10 MB cap
-                # is what a full-resolution CompressedImage burst needs.
-                'max_message_size': 10000000,
-                # The UI calls /drive/* and /lights/* while streaming video.
-                # On the single-threaded default a service the rover is slow to
-                # answer stalls every subscription with it.
-                'call_services_in_new_thread': True,
-                # Empty globs are rosbridge's "expose everything"; the console
-                # is on a private link and the UI reads arbitrary topics.
-                'topics_glob': '',
-                'services_glob': '',
-                'params_glob': '',
-            }],
-            output='screen',
-        ),
-        # rosapi is a separate process from the websocket but not optional:
-        # the UI enumerates topics and services through it, and without it the
-        # panels come up blank even though the socket is connected.
-        Node(
-            package='rosapi',
-            executable='rosapi_node',
-            name='rosapi',
-            condition=IfCondition(use_rosbridge),
-            parameters=[{
-                'topics_glob': '',
-                'services_glob': '',
-                'params_glob': '',
-            }],
-            output='screen',
-        ),
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(joy_launch),
+                condition=IfCondition(use_joy),
+            ),
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(comms_launch),
+                condition=IfCondition(use_comms),
+            ),
 
-        Node(
-            package='web_video_server',
-            executable='web_video_server',
-            name='web_video_server',
-            condition=IfCondition(use_video),
-            parameters=[{
-                'port': video_port,
-                'address': '0.0.0.0',
-                # Default is 'mjpeg'; 'ros_compressed' hands the browser the
-                # frames the rover already compressed instead of decoding and
-                # re-encoding them on the console CPU. The UI asks for the type
-                # per tile anyway, this only sets the fallback.
-                'default_stream_type': 'ros_compressed',
-            }],
-            output='screen',
-        ),
+            # Bound to every interface on purpose: the console laptop serves the UI
+            # and a second machine on the same switch opens it, which is how the
+            # team actually operates. An empty address is rosbridge's own "all".
+            Node(
+                package='rosbridge_server',
+                executable='rosbridge_websocket',
+                name='rosbridge_websocket',
+                condition=IfCondition(use_rosbridge),
+                parameters=[{
+                    'port': rosbridge_port,
+                    'address': '',
+                    # Camera frames over rosbridge are large; the stock 10 MB cap
+                    # is what a full-resolution CompressedImage burst needs.
+                    'max_message_size': 10000000,
+                    # The UI calls /drive/* and /lights/* while streaming video.
+                    # On the single-threaded default a service the rover is slow to
+                    # answer stalls every subscription with it.
+                    'call_services_in_new_thread': True,
+                    # Empty globs are rosbridge's "expose everything"; the console
+                    # is on a private link and the UI reads arbitrary topics.
+                    'topics_glob': '',
+                    'services_glob': '',
+                    'params_glob': '',
+                }],
+                output='screen',
+            ),
+            # rosapi is a separate process from the websocket but not optional:
+            # the UI enumerates topics and services through it, and without it the
+            # panels come up blank even though the socket is connected.
+            Node(
+                package='rosapi',
+                executable='rosapi_node',
+                name='rosapi',
+                condition=IfCondition(use_rosbridge),
+                parameters=[{
+                    'topics_glob': '',
+                    'services_glob': '',
+                    'params_glob': '',
+                }],
+                output='screen',
+            ),
+
+            Node(
+                package='web_video_server',
+                executable='web_video_server',
+                name='web_video_server',
+                condition=IfCondition(use_video),
+                parameters=[{
+                    'port': video_port,
+                    'address': '0.0.0.0',
+                    # Default is 'mjpeg'; 'ros_compressed' hands the browser the
+                    # frames the rover already compressed instead of decoding and
+                    # re-encoding them on the console CPU. The UI asks for the type
+                    # per tile anyway, this only sets the fallback.
+                    'default_stream_type': 'ros_compressed',
+                }],
+                output='screen',
+            ),
+        ]),
     ])

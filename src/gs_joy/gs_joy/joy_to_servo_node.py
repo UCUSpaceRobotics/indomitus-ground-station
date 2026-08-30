@@ -77,8 +77,9 @@ class JoyToServoNode(Node):
             self.joy_callback,
             10)
         
-        # Publisher for MoveIt Servo
-        self.publisher_ = self.create_publisher(TwistStamped, 'servo_node/delta_twist_cmds', 10)
+        # Publisher for MoveIt Servo. Absolute: MoveIt Servo runs outside the
+        # gs namespace, on the rover/arm side.
+        self.publisher_ = self.create_publisher(TwistStamped, '/servo_node/delta_twist_cmds', 10)
         
         self.get_logger().info("Joy to MoveIt Servo Node started")
 

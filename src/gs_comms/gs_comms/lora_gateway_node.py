@@ -6,7 +6,7 @@
 it existed the decision went nowhere: nothing in the repo subscribed to that
 topic at all.
 
-While the path is LORA it takes the operator's Twist from /cmd_vel_ext - the
+While the path is LORA it takes the operator's Twist from /cmd_vel_gs - the
 same command the panel joystick feeds into twist_mux - converts it to the
 compact form mast/lora_bridge.py accepts, and writes it to the bridge's TCP
 service on the mast Pi. While the path is WIFI it sends nothing, so the rover
@@ -91,7 +91,9 @@ class LoraGatewayNode(Node):
         # come if the path was decided before this node started.
         self.create_subscription(
             String, "link/active_path", self._on_path, latched)
-        self.create_subscription(Twist, "cmd_vel_ext", self._on_twist, 10)
+        # Absolute: this is joy_to_cmd_vel_node's remapped output, which lives
+        # outside the gs namespace on purpose so the rover-side twist_mux sees it.
+        self.create_subscription(Twist, "/cmd_vel_gs", self._on_twist, 10)
         # Nothing publishes this yet. It exists so an operator-console stop
         # button has somewhere to go without inventing new plumbing then.
         self.create_subscription(Bool, "lora/estop", self._on_estop, 10)

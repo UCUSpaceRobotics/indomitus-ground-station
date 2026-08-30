@@ -189,14 +189,14 @@ ros2 run gs_joy joy_to_servo_node
 `joy_to_cmd_vel_node` turns `/joy` into `geometry_msgs/Twist`. It is a swerve
 rover, so `linear.y` is real — it can strafe sideways.
 
-**Publish to `/cmd_vel_ext`, not `/cmd_vel`.** On the rover `/cmd_vel` is the
+**Publish to `/cmd_vel_gs`, not `/cmd_vel`.** On the rover `/cmd_vel` is the
 *output* of `twist_mux`, which arbitrates three inputs (`rover_bringup/config/twist_mux.yaml`):
 
 | Input          | Priority | Source                        |
 | -------------- | -------- | ----------------------------- |
 | `cmd_vel_joy`  | 100      | onboard bluetooth gamepad     |
 | `cmd_vel_nav`  | 50       | Nav2                          |
-| `cmd_vel_ext`  | 10       | this ground station           |
+| `cmd_vel_gs`  | 10       | this ground station           |
 
 The launch file remaps accordingly. Lowest priority is deliberate: whoever holds
 the onboard gamepad can always override the remote console, and twist_mux drops

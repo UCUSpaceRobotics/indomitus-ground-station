@@ -48,7 +48,7 @@ def generate_launch_description():
             }],
         ),
 
-        # Acts on the decision. Relays /cmd_vel_ext over the radio while the
+        # Acts on the decision. Relays /cmd_vel_gs over the radio while the
         # path is LORA, and republishes the radio's own metrics.
         Node(
             package='gs_comms',
