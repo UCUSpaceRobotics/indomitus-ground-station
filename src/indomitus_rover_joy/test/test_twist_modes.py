@@ -15,6 +15,7 @@ import pytest
 from indomitus_rover_joy.twist_modes import (
     MODE_CURVATURE,
     MODE_ROW,
+    apply_deadzone,
     apply_granny,
     build_twist,
     clamp_linear,
@@ -190,3 +191,49 @@ def test_curvature_needs_no_mirror():
     # its own; correcting again would cancel that back out.
     args = (-0.5, 0.0, 0.9, 0.9, CURV, PROBE)
     assert build_twist(MODE_CURVATURE, *args, False) == build_twist(MODE_CURVATURE, *args, True)
+
+
+# ── deadzone ────────────────────────────────────────────────────────────────
+# The bug this exists for: a stick resting off-centre reads non-zero, so the
+# rover creeps with nobody touching the console.
+
+
+def test_a_stick_inside_the_band_commands_nothing():
+    assert apply_deadzone(0.04, 0.05) == 0.0
+    assert apply_deadzone(-0.04, 0.05) == 0.0
+
+
+def test_the_band_is_exclusive_at_its_own_edge():
+    # Exactly at the edge is outside the band, and rescaling puts it at zero,
+    # so there is no step between the two sides of the boundary.
+    assert apply_deadzone(0.05, 0.05) == pytest.approx(0.0)
+
+
+def test_leaving_the_band_does_not_jump():
+    # Without the rescale this would be 0.06 — a visible lurch the moment the
+    # stick clears the band.
+    assert apply_deadzone(0.06, 0.05) == pytest.approx(0.0105263, abs=1e-6)
+
+
+def test_full_travel_survives_the_deadzone():
+    # Whatever the band, a stick at the stop must still command full speed.
+    for dz in (0.0, 0.05, 0.2, 0.9):
+        assert apply_deadzone(1.0, dz) == pytest.approx(1.0)
+        assert apply_deadzone(-1.0, dz) == pytest.approx(-1.0)
+
+
+def test_zero_deadzone_is_a_true_no_op():
+    for value in (-1.0, -0.5, -0.001, 0.0, 0.001, 0.5, 1.0):
+        assert apply_deadzone(value, 0.0) == value
+
+
+def test_the_response_is_symmetric():
+    for value in (0.06, 0.3, 0.75, 1.0):
+        assert apply_deadzone(-value, 0.1) == pytest.approx(-apply_deadzone(value, 0.1))
+
+
+def test_a_deadzone_of_one_pins_the_stick_shut():
+    # Guards the 1/(1 - deadzone) division. The node rejects >= 1.0, but the
+    # helper must not divide by zero if it is ever called directly.
+    assert apply_deadzone(1.0, 1.0) == 0.0
+    assert apply_deadzone(0.5, 1.5) == 0.0

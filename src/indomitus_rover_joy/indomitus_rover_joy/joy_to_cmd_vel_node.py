@@ -10,6 +10,7 @@ from indomitus_rover_joy.twist_modes import (
     MODE_CURVATURE,
     MODE_ROW,
     MODES,
+    apply_deadzone,
     apply_granny,
     build_twist,
     clamp_linear,
@@ -38,6 +39,17 @@ class JoyToCmdVelNode(Node):
         self.declare_parameter('linear_x_scale', 0.5)
         self.declare_parameter('linear_y_scale', 0.5)
         self.declare_parameter('angular_z_scale', 1.0)
+        # Dead band around stick centre, as a fraction of full travel, applied
+        # to the axis as it arrives here. console_boards_node has a deadzone of
+        # its own, but that one is measured around the *calibrated* centre, so
+        # a stick whose rest position has drifted reads non-zero, clears that
+        # band, and the rover creeps untouched. This one does not care how the
+        # Joy was produced, which is also what makes it work for a gamepad that
+        # never passed through console_boards_node. 0.0 disables it.
+        #
+        # Applied before the scales and before the mode, so the clamp, the
+        # curvature and the yaw rate all see a stick that is genuinely centred.
+        self.declare_parameter('deadzone', 0.05)
         # The console's sticks travel in a square gate, not a circular one, so
         # both axes can read 1.0 at once. A full diagonal is then sqrt(2) times
         # the per-axis scale, which is how a 1 m/s rover ends up commanded at
@@ -137,6 +149,8 @@ class JoyToCmdVelNode(Node):
             self.axes[name] = self.get_parameter(f'{name}_axis').get_parameter_value().integer_value
             self.scales[name] = self.get_parameter(f'{name}_scale').get_parameter_value().double_value
         self.add_on_set_parameters_callback(self._on_set_parameters)
+
+        self.deadzone = self.get_parameter('deadzone').get_parameter_value().double_value
 
         self.max_linear_speed = self.get_parameter(
             'max_linear_speed').get_parameter_value().double_value
@@ -270,6 +284,10 @@ class JoyToCmdVelNode(Node):
                 if param.value not in MODES:
                     return SetParametersResult(
                         successful=False, reason=f'twist_mode must be one of {MODES}')
+            elif param.name == 'deadzone':
+                if not 0.0 <= float(param.value) < 1.0:
+                    return SetParametersResult(
+                        successful=False, reason='deadzone must be in [0.0, 1.0)')
             elif param.name in ('twist_mode_switch_source',
                                 'vy_switch_source',
                                 'granny_switch_source',
@@ -286,6 +304,8 @@ class JoyToCmdVelNode(Node):
                     self.axes[name] = int(param.value)
                 elif param.name == f'{name}_scale':
                     self.scales[name] = float(param.value)
+            if param.name == 'deadzone':
+                self.deadzone = float(param.value)
             if param.name == 'max_linear_speed':
                 self.max_linear_speed = float(param.value)
             if param.name == 'publish_rate':
@@ -382,13 +402,16 @@ class JoyToCmdVelNode(Node):
 
         num_axes = len(msg.axes)
 
-        def get_axis_val(name):
-            idx = self.axes[name]
-            return msg.axes[idx] * self.scales[name] if 0 <= idx < num_axes else 0.0
-
         def get_axis_raw(name):
             idx = self.axes[name]
-            return msg.axes[idx] if 0 <= idx < num_axes else 0.0
+            if not 0 <= idx < num_axes:
+                return 0.0
+            return apply_deadzone(msg.axes[idx], self.deadzone)
+
+        # Defined in terms of get_axis_raw so the dead band cannot apply to the
+        # scaled pair and miss `steer`, which reads the yaw axis unscaled.
+        def get_axis_val(name):
+            return get_axis_raw(name) * self.scales[name]
 
         vy_enabled = self.active_vy(msg.buttons)
         if vy_enabled != self._logged_vy:
