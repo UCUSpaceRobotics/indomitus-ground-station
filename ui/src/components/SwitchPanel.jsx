@@ -6,6 +6,7 @@ import { fmtNumber, NO_VALUE } from '../lib/format';
 import { armSlotAt, useArmBindings } from '../hooks/useArmBindings';
 import { SLOTS_BY_KEY } from '../lib/armSlots';
 import {
+  CONSOLE_MODES,
   MODE_SWITCH_INDEX,
   SOURCE_JOY,
   SOURCE_LIMITS,
@@ -50,6 +51,16 @@ export default function SwitchPanel() {
 
     const fn = config.functionBinds.find((b) => b.source === source && b.index === index);
     if (fn) return { text: functionLabel(fn), tag: 'rover' };
+
+    // Steering mode, strafe, granny and mute are not rover services and so are
+    // not in functionBinds — they are parameters on the drive node. They are
+    // still switches on this panel, and leaving them out drew them as
+    // "unassigned" no matter what the operator had wired them to.
+    const mode = CONSOLE_MODES.find((m) => {
+      const bind = config[m.key];
+      return bind && bind.source === source && bind.index === index;
+    });
+    if (mode) return { text: mode.name, tag: 'mode' };
 
     const slot = armSlotAt(armBindings, source, index);
     if (slot) {

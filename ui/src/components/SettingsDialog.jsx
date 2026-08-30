@@ -13,6 +13,7 @@ import { parameterRequest, useServiceCaller } from '../ros/useService';
 import {
   CUSTOM_KEY,
   FUNCTION_GROUPS,
+  CONSOLE_MODES,
   SOURCE_JOY,
   SOURCE_LIMITS,
   SOURCE_SWITCHES,
@@ -295,47 +296,6 @@ export default function SettingsDialog({ open, onClose }) {
       functionBinds: prev.functionBinds.filter((b) => b.function !== key),
     }));
 
-
-  /**
-   * Console modes are not rover services, so they are not function binds: each
-   * is a pair of parameters on the node that builds the Twist. They are listed
-   * with the functions anyway, because from the console it is the same gesture
-   * — pick a switch, get a behaviour.
-   */
-  const CONSOLE_MODES = [
-    {
-      key: 'driveModeBind',
-      name: 'Steering mode',
-      calls: 'row / curvature',
-      hint: 'Curvature: the yaw stick sets a turn radius, so one arc holds across the '
-        + 'speed range. Row: the yaw stick is the yaw rate directly, which is what '
-        + 'strafing and precise placement want.',
-    },
-    {
-      key: 'vyBind',
-      name: 'Strafe (vy)',
-      calls: 'sideways motion',
-      hint: 'Off by default, as on the rover. With strafe live a diagonal stick crabs '
-        + 'instead of turning. While it is off, row mode also mirrors yaw in reverse so '
-        + 'the rover steers like a car.',
-    },
-    {
-      key: 'grannyBind',
-      name: 'Granny mode',
-      calls: 'speed \u00d70.1',
-      hint: 'Scales the whole command — yaw included, so a turn keeps its shape '
-        + 'instead of tightening as you slow down.',
-    },
-    {
-      key: 'muteBind',
-      name: 'No output',
-      calls: 'stop commanding',
-      hint: 'Hands the drive to the onboard gamepad or autonomy without killing the '
-        + 'node. One zero Twist goes out first, then silence: twist_mux holds the '
-        + 'last command it was given, so going quiet alone would leave the rover '
-        + 'running on it.',
-    },
-  ];
 
   const bindOf = (key) => draft[key] || { source: SOURCE_SWITCHES, index: UNBOUND };
 

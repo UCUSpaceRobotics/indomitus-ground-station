@@ -112,3 +112,54 @@ export const MODE_SWITCH_INDEX = 0;
 export function isArmMode(joyMessage) {
   return joyMessage?.buttons?.[MODE_SWITCH_INDEX] === 1;
 }
+
+
+/**
+ * Console modes: behaviours of the ground station's own drive node rather than
+ * rover services, so they are not function binds — each is a pair of
+ * parameters on joy_to_cmd_vel_node. From the operator's seat it is the same
+ * gesture though, pick a switch and get a behaviour, so they are offered
+ * beside the functions.
+ *
+ * Lives here rather than inside the settings dialog because the control-box
+ * panel has to label these controls too. While the dialog owned the list, a
+ * switch bound to the steering mode was drawn as "unassigned" — which is the
+ * one thing an operator opens that panel to find out.
+ *
+ * `key` is the config field holding the bind, so `config[mode.key]` is the
+ * {source, index} it is wired to.
+ */
+export const CONSOLE_MODES = [
+  {
+    key: 'driveModeBind',
+    name: 'Steering mode',
+    calls: 'row / curvature',
+    hint: 'Curvature: the yaw stick sets a turn radius, so one arc holds across the '
+      + 'speed range. Row: the yaw stick is the yaw rate directly, which is what '
+      + 'strafing and precise placement want.',
+  },
+  {
+    key: 'vyBind',
+    name: 'Strafe (vy)',
+    calls: 'sideways motion',
+    hint: 'Off by default, as on the rover. With strafe live a diagonal stick crabs '
+      + 'instead of turning. While it is off, row mode also mirrors yaw in reverse so '
+      + 'the rover steers like a car.',
+  },
+  {
+    key: 'grannyBind',
+    name: 'Granny mode',
+    calls: 'speed \u00d70.1',
+    hint: 'Scales the whole command — yaw included, so a turn keeps its shape '
+      + 'instead of tightening as you slow down.',
+  },
+  {
+    key: 'muteBind',
+    name: 'No output',
+    calls: 'stop commanding',
+    hint: 'Hands the drive to the onboard gamepad or autonomy without killing the '
+      + 'node. One zero Twist goes out first, then silence: twist_mux holds the '
+      + 'last command it was given, so going quiet alone would leave the rover '
+      + 'running on it.',
+  },
+];
