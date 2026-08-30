@@ -103,6 +103,11 @@ def generate_launch_description():
                 'linear_x_scale': 0.5,
                 'linear_y_scale': 0.5,
                 'angular_z_scale': 1.0,
+                # Second dead band, on top of console_boards' own. That one is
+                # measured around the calibrated centre and so misses a stick
+                # that rests off-centre; this one is applied to the axis as it
+                # arrives, and also covers a gamepad publishing /joy directly.
+                'deadzone': 0.05,
                 'joy_timeout': 0.2,
                 # The sticks run at 200 Hz; the rover link does not need to.
                 'publish_rate': 50.0,

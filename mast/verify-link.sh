@@ -23,7 +23,7 @@ ROVER_PW=${ROVER_PW:-}
 GS_MAST_IF=eno1
 
 PI_ALFA=wlx00c0caba8237
-ROVER_ALFA=wlx00c0caba86c1
+ROVER_ALFA=wlan_rtl        # 70-wifi-names.rules renames it; NOT wlx<mac>
 ROVER_ALFA_MAC=00:c0:ca:ba:86:c1
 INTEL_MAC=74:04:f1:bc:7f:0f
 
@@ -169,40 +169,52 @@ check_rover() {
     if ! locate_rover; then fail "reachable" "${ROVER_HINT:-no tcp/22 via lifeline or Wi-Fi}"; return; fi
     pass "reachable" "via ${ROVER#*@} - $(rover 'uptime -p')"
 
-    check "rtw88 driver loaded" "rtw_8812au" "$(rover 'lsmod | grep -oE "^rtw_8812au"')"
-    check "AP service active" "active" "$(rover 'systemctl is-active rover-ap.service')"
-    check "AP service enabled" "enabled" "$(rover 'systemctl is-enabled rover-ap.service')"
+    # DO NOT copy the Pi's rtw88 expectation onto the rover. This box is a Nano
+    # 4GB on JetPack 4.5.1 - kernel 4.9.201-tegra. rtw88 only gained 8812au
+    # support in Linux 6.13; the Pi reaches it through the rtw88 DKMS backport,
+    # which will not build against 4.9 with gcc 7.5 (see mast/README.md). The
+    # aircrack-ng rtl88xxau DKMS is the only driver that builds here, so 88XXau
+    # is CORRECT on the rover and rtw_8812au is correct on the Pi.
+    check "rtl88xxau driver loaded" "88XXau" "$(rover 'lsmod | grep -oE "^88XXau"')"
+
+    # The AP is a NetworkManager connection named Hotspot, not hostapd behind a
+    # rover-ap.service - hostapd is deliberately masked on this box. The old
+    # rover-ap.service checks predate the Orin -> Nano swap and always failed.
+    check "AP connection active" "activated" \
+        "$(rover 'nmcli -t -f NAME,STATE connection show --active | awk -F: "\$1 == \"Hotspot\" { print \$2 }"')"
+    check "AP autoconnects" "yes" \
+        "$(rover 'nmcli -t -f connection.autoconnect connection show Hotspot | cut -d: -f2')"
+    check "AP in ap mode" "ap" \
+        "$(rover 'nmcli -t -f 802-11-wireless.mode connection show Hotspot | cut -d: -f2')"
+    # ipv4.method=shared is what runs the DHCP server the guests need.
+    check "AP shares ipv4" "shared" \
+        "$(rover 'nmcli -t -f ipv4.method connection show Hotspot | cut -d: -f2')"
 
     local info width
     info=$(rover "iw dev $ROVER_ALFA info")
     width=$(sed -n 's/.*width: \([0-9]*\) MHz.*/\1/p' <<<"$info")
     case "$width" in
         80|40) pass "AP channel width" "${width} MHz" ;;
-        20)    warn "AP channel width" "20 MHz - half the expected throughput" ;;
+        20)    warn "AP channel width" "20 MHz - half the expected throughput; NM defaults to 20 unless the Hotspot profile sets a width" ;;
         *)     fail "AP channel width" "got '${width:-?}'" ;;
     esac
     check "AP power save off" "off" "$(rover "iw dev $ROVER_ALFA get power_save | awk '{print \$3}'")"
 
-    # Both radios must be hidden from NM in ONE key: conf.d overrides rather
-    # than merges, so two files means the later one silently wins.
-    local unmanaged
-    unmanaged=$(rover 'grep -h unmanaged-devices /etc/NetworkManager/conf.d/*.conf 2>/dev/null | tr -d " "')
-    if [[ "$unmanaged" == *"$ROVER_ALFA_MAC"* && "$unmanaged" == *"$INTEL_MAC"* ]]; then
-        pass "both radios unmanaged by NM" "one merged key"
-    else
-        fail "both radios unmanaged by NM" "${unmanaged:-<none>}"
-    fi
+    # NOTE: there is deliberately no "radios unmanaged by NM" check here. On the
+    # Orin both radios were hidden from NetworkManager; on this Nano NM *is* the
+    # AP, so the Alfa must be managed. Asserting the old policy always failed.
 
-    # Intel WiFi off (Bluetooth deliberately stays up - separate rfkill entry).
-    local intel_phy intel_block
-    intel_phy=$(rover "iw dev wlP7p1s0 info 2>/dev/null | awk '/wiphy/{print \$2}'")
-    if [ -n "$intel_phy" ]; then
-        intel_block=$(rover "rfkill list | grep -A1 'phy${intel_phy}:' | awk '/Soft blocked/{print \$3}'")
-        [ "$intel_block" = "yes" ] && pass "Intel WiFi rfkill-blocked" "phy$intel_phy soft blocked" \
-                                   || warn "Intel WiFi rfkill-blocked" "phy$intel_phy blocked=${intel_block:-?} - it scans 5180 MHz"
-    else
-        skip "Intel WiFi rfkill-blocked" "wlP7p1s0 not present"
-    fi
+    # The onboard Intel radio scans every channel, including the AP's, whenever
+    # it is not parked on a network. Not fatal, but it costs the link.
+    local intel_state
+    intel_state=$(rover "nmcli -t -f DEVICE,STATE device status | awk -F: '\$1 == \"wlan_intel\" { print \$2 }'")
+    case "$intel_state" in
+        "")             skip "Intel radio parked" "wlan_intel not present" ;;
+        unavailable|unmanaged|disconnected)
+                        pass "Intel radio parked" "$intel_state" ;;
+        connected)      warn "Intel radio parked" "connected - associated, so not sweeping 5180 MHz, but still on air" ;;
+        *)              warn "Intel radio parked" "$intel_state - a radio stuck mid-connect rescans every channel, the AP's included" ;;
+    esac
     check "Bluetooth still up" "UP RUNNING" "$(rover 'hciconfig hci0 2>/dev/null | grep -o "UP RUNNING"')"
 }
 
@@ -215,33 +227,27 @@ check_ap_guests() {
     head_ "AP guest access (devices other than the mast Pi)"
     [ -n "$ROVER" ] || { skip "all checks" "rover unreachable"; return; }
 
-    check "DHCP server running" "active" "$(rover 'systemctl is-active rover-ap-dhcp.service')"
-    check "DHCP server enabled" "enabled" "$(rover 'systemctl is-enabled rover-ap-dhcp.service')"
-
-    local conf
-    conf=$(rover 'cat /etc/hostapd/rover-ap.conf 2>/dev/null')
-    if [ -z "$conf" ]; then
-        conf=$(rover_root 'cat /etc/hostapd/rover-ap.conf')
-        [ -z "$conf" ] && { skip "hostapd config checks" "need ROVER_PW"; return; }
+    # NM's shared mode spawns its OWN dnsmasq for the AP interface; the system
+    # dnsmasq.service is unrelated and is expected to be inactive. Checking that
+    # service was the old hostapd-era assumption and always failed.
+    local dhcp range
+    dhcp=$(rover "pgrep -af dnsmasq | grep -- '$ROVER_ALFA' | head -1")
+    if [ -n "$dhcp" ]; then
+        range=$(sed -n 's/.*--dhcp-range=\([^ ]*\).*/\1/p' <<<"$dhcp")
+        pass "DHCP server running" "NM dnsmasq${range:+, $range}"
+    else
+        fail "DHCP server running" "no dnsmasq bound to $ROVER_ALFA - guests get no address"
     fi
 
-    grep -q '^ignore_broadcast_ssid=1' <<<"$conf" \
-        && warn "SSID broadcast" "hidden - clients must add it manually" \
-        || pass "SSID broadcast" "visible"
-
-    local acl
-    acl=$(grep '^macaddr_acl=' <<<"$conf" | cut -d= -f2)
-    [ "${acl:-0}" = "0" ] && pass "MAC filtering" "open (macaddr_acl=${acl:-0})" \
-                          || fail "MAC filtering" "macaddr_acl=$acl - only listed MACs may join"
-
-    local maxsta
-    maxsta=$(grep '^max_num_sta=' <<<"$conf" | cut -d= -f2)
-    [ -z "$maxsta" ] && pass "client limit" "unset (hostapd default 2007)" \
-                     || warn "client limit" "max_num_sta=$maxsta"
-
-    grep -q '^ap_isolate=1' <<<"$conf" \
-        && warn "client isolation" "on - guests cannot reach each other" \
-        || pass "client isolation" "off"
+    # No hostapd config to read: hostapd is masked and the AP is an NM profile,
+    # so the old ignore_broadcast_ssid / macaddr_acl / max_num_sta / ap_isolate
+    # checks have nothing to read. Report what the NM profile does express.
+    check "SSID" "IndomitusRover" \
+        "$(rover 'nmcli -t -f 802-11-wireless.ssid connection show Hotspot | cut -d: -f2')"
+    check "AP band" "a" \
+        "$(rover 'nmcli -t -f 802-11-wireless.band connection show Hotspot | cut -d: -f2')"
+    check "AP channel" "36" \
+        "$(rover 'nmcli -t -f 802-11-wireless.channel connection show Hotspot | cut -d: -f2')"
 
     local stations
     stations=$(rover_root "iw dev $ROVER_ALFA station dump | grep -c '^Station'")

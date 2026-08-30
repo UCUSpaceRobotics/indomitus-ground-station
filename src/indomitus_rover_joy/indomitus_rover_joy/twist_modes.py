@@ -111,6 +111,32 @@ def apply_granny(vx, vy, wz, scale, enabled):
     return float(vx) * scale, float(vy) * scale, float(wz) * scale
 
 
+def apply_deadzone(value, deadzone):
+    """Kill stick noise around centre, then rescale the rest to full travel.
+
+    console_boards_node already deadzones while it normalises, but that band
+    sits around the *calibrated* centre: a stick whose rest position has
+    drifted away from axis_center reads non-zero, clears the band, and the
+    rover creeps with the sticks untouched. This one is applied to the axis
+    value as it actually arrives, so it holds whatever produced the Joy — a
+    miscalibrated console, or a gamepad that never went through
+    console_boards_node at all.
+
+    The rescale is what keeps it from being a cliff: without it the output
+    jumps from 0 to `deadzone` the moment the stick leaves the band.
+    """
+    deadzone = float(deadzone)
+    value = float(value)
+    if deadzone <= 0.0:
+        return value
+    if abs(value) < deadzone:
+        return 0.0
+    if deadzone >= 1.0:
+        return 0.0
+    sign = 1.0 if value > 0.0 else -1.0
+    return sign * (abs(value) - deadzone) / (1.0 - deadzone)
+
+
 def clamp_linear(vx, vy, max_linear_speed):
     """Shrink the linear pair along its own direction.
 
