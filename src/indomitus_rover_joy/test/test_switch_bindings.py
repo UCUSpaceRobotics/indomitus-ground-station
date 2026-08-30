@@ -250,3 +250,28 @@ def test_invert_still_reaches_the_binding():
         'function': 'drive_power', 'source': SOURCE_SWITCHES,
         'index': 0, 'invert': True}])
     assert binds[0].desired(0) is True and binds[0].desired(1) is False
+
+
+def test_a_bind_past_the_end_of_its_board_is_refused():
+    """The failure it prevents: switch 12 exists on the button board and not on
+    the joystick one, so moving the bind across leaves it somewhere no frame
+    reaches. The old set built cleanly and then did nothing at all.
+    """
+    with pytest.raises(ValueError, match='9 controls'):
+        binds_from_specs([
+            {'function': 'drive_compact', 'source': SOURCE_JOY, 'index': 12}])
+
+    # The same index is fine on the wider board.
+    binds = binds_from_specs([
+        {'function': 'drive_compact', 'source': SOURCE_SWITCHES, 'index': 12}])
+    assert binds[0].index == 12
+
+
+def test_each_board_is_bindable_to_its_last_control():
+    for source, last in ((SOURCE_JOY, 8), (SOURCE_SWITCHES, 22)):
+        binds = binds_from_specs([
+            {'function': 'drive_power', 'source': source, 'index': last}])
+        assert binds[0].index == last
+        with pytest.raises(ValueError, match='is not one of them'):
+            binds_from_specs([
+                {'function': 'drive_power', 'source': source, 'index': last + 1}])

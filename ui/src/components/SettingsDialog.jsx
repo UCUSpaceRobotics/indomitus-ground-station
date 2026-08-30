@@ -212,17 +212,28 @@ export default function SettingsDialog({ open, onClose }) {
       ),
     }));
 
+  // An index only means something on its own board: the joystick board has 9
+  // controls, the button board 23. Moving a bind between them therefore has to
+  // let go of an index the new board does not have. Clamping it to the last
+  // control would quietly bind a different switch; keeping it leaves the bind
+  // past the end of the board, where the panel never draws a row to label and
+  // the node never sees the index in a frame — a function that looks bound and
+  // does nothing. Unbind it instead, so the operator is asked to pick again.
+  const fitIndex = (source, index) => (index < SOURCE_LIMITS[source] ? index : UNBOUND);
+
   const patchBind = (index, patch) => {
+    let next = patch;
     if (patch.index !== undefined || patch.source !== undefined) {
       const current = draft.functionBinds[index];
       const source = patch.source ?? current.source;
-      const next = patch.index ?? current.index;
-      if (next >= 0) claimControl(source, next, index);
+      const wanted = fitIndex(source, patch.index ?? current.index);
+      next = { ...patch, index: wanted };
+      if (wanted >= 0) claimControl(source, wanted, index);
     }
     setDraft((prev) => ({
       ...prev,
       functionBinds: prev.functionBinds.map((bind, i) =>
-        i === index ? { ...bind, ...patch } : bind,
+        i === index ? { ...bind, ...next } : bind,
       ),
     }));
   };
@@ -274,6 +285,7 @@ export default function SettingsDialog({ open, onClose }) {
       invert: false,
       ...patch,
     };
+    bind.index = fitIndex(bind.source, bind.index);
     if (bind.index >= 0) claimControl(bind.source, bind.index, -1);
     setDraft((prev) => ({ ...prev, functionBinds: [...prev.functionBinds, bind] }));
   };
@@ -334,8 +346,13 @@ export default function SettingsDialog({ open, onClose }) {
 
   const bindOf = (key) => draft[key] || { source: SOURCE_SWITCHES, index: UNBOUND };
 
+  // Same board-width rule as the function binds: these are the same gesture on
+  // a different node, and an out-of-range index is just as invisible there.
   const setModeBind = (key, patch) =>
-    setDraft((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
+    setDraft((prev) => {
+      const next = { ...prev[key], ...patch };
+      return { ...prev, [key]: { ...next, index: fitIndex(next.source, next.index) } };
+    });
 
   // Press-to-bind, the same gesture as the arm mapping page. While a function
   // is learning, the next control that moves claims it.
