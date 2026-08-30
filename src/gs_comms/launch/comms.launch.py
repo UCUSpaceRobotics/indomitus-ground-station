@@ -33,27 +33,35 @@ def generate_launch_description():
     # this console's ESP32-S3 (e32-e-stop-gs) on USB, talking 430 MHz to the
     # rover's emergency-esp. It carries power on/off and the Jetson reset.
     #
-    # gs_joy owns ttyACM0 (joysticks) and ttyACM1 (buttons), so this board
-    # lands on ttyACM2 - but all three enumerate as the same anonymous 1a86
-    # USB_Single_Serial bridge, so that only holds while they are plugged in
-    # the same order. Pin it with a udev rule instead:
+    # ALWAYS a by-id path, never /dev/ttyACM<n>. All three console boards are
+    # the same anonymous 1a86 USB_Single_Serial bridge, so the ACM index is
+    # just plug order - and because every node in the container runs as root,
+    # root ignores TIOCEXCL and two nodes will happily hold the same port and
+    # eat each other's bytes. A ttyACM guess here once landed on the joystick
+    # board and killed /gs/joy with no error printed anywhere.
     #
-    #   udevadm info -q property -n /dev/ttyACM2 | grep ID_SERIAL_SHORT
-    #   SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", \
-    #     ATTRS{serial}=="<that value>", SYMLINK+="gs-estop-esp"
+    # The joystick and button boards are pinned by serial in .env; add this
+    # one the same way if it ever moves:
     #
-    # then launch with estop_port:=/dev/gs-estop-esp.
+    #   ESTOP_BOARD_PORT=/dev/serial/by-id/usb-1a86_USB_Single_Serial_<sn>-if00
+    #
+    # Find <sn> with: udevadm info -q property -n /dev/ttyACMn | grep SERIAL_SHORT
     estop_port_arg = DeclareLaunchArgument(
         'estop_port',
-        default_value=EnvironmentVariable('ESTOP_BOARD_PORT',
-                                          default_value='/dev/ttyACM2'),
+        default_value=EnvironmentVariable(
+            'ESTOP_BOARD_PORT',
+            default_value='/dev/serial/by-id/'
+                          'usb-1a86_USB_Single_Serial_5C4C051474-if00'),
         description='Serial port of the e-stop board (power cut + Jetson reset)'
     )
 
-    # A console that only watches telemetry has no e-stop board plugged in.
+    # Off by default: the e32-e-stop-gs firmware does not yet implement the
+    # host line protocol this node speaks, so there is nothing to talk to, and
+    # opening a port for no reason is how the joystick collision above
+    # happened. Turn it on once that firmware lands.
     use_estop_board_arg = DeclareLaunchArgument(
         'use_estop_board',
-        default_value='true',
+        default_value='false',
         description='Open the e-stop board; false makes the power services refuse'
     )
 

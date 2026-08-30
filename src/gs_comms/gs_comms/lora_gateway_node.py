@@ -148,16 +148,21 @@ class LoraGatewayNode(Node):
         self.declare_parameter("cmd_timeout", 0.5)
 
         # -- emergency board (second radio; see the module docstring) --------
-        # A console that is only watching telemetry has no e-stop board
-        # plugged in, and its serial thread would spend the session logging
-        # open() failures. Same rationale as gs.launch.py's use_joy.
-        self.declare_parameter("use_estop_board", True)
-        # Third serial board on the console. gs_joy owns ttyACM0 (joysticks)
-        # and ttyACM1 (buttons); all three enumerate as the same anonymous
-        # 1a86 USB_Single_Serial bridge, so this order only holds because they
-        # are always plugged in the same order. A udev rule keyed on
-        # ID_SERIAL_SHORT is the real fix - see comms.launch.py.
-        self.declare_parameter("estop_port", "/dev/ttyACM2")
+        # Opt-in, and default OFF on purpose. Opening the wrong port is not a
+        # harmless mistake here: all three console boards enumerate as the same
+        # anonymous 1a86 USB_Single_Serial bridge, every process in the
+        # container runs as root, and root ignores TIOCEXCL - so two nodes can
+        # hold one port and silently eat each other's bytes. That is exactly
+        # what happened when this defaulted to a /dev/ttyACM<n> guess: it
+        # landed on the joystick board and /gs/joy went dead with no error
+        # anywhere. Turn it on only with a port pinned by serial number.
+        self.declare_parameter("use_estop_board", False)
+        # Never a bare /dev/ttyACM<n>: that index depends on plug order and is
+        # not stable across a replug. The joystick and button boards are
+        # already pinned by serial number in .env; this is the third board.
+        self.declare_parameter(
+            "estop_port",
+            "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5C4C051474-if00")
         self.declare_parameter("estop_baudrate", 115200)
         # The S3 holds the desired state, so this is not a heartbeat the rover
         # depends on. It exists so a reconnect re-asserts intent and a board
