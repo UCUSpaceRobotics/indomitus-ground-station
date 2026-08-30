@@ -1,4 +1,4 @@
-serial_joy_node:
+console_boards:
   ros__parameters:
     axis_center:
     - 497.0

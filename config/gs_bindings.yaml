@@ -1,12 +1,16 @@
 gs_interpreter:
   ros__parameters:
-    binds: '[{"function": "drive_power", "source": "switches", "index": 8, "invert":
-      false}, {"function": "drive_compact", "source": "switches", "index": 12, "invert":
-      false}, {"function": "spotlight", "source": "switches", "index": 10, "invert":
-      false}, {"function": "beautiful", "source": "switches", "index": 11, "invert":
+    binds: '[{"function": "drive_power", "source": "switches", "index": 6, "invert":
+      false}, {"function": "drive_compact", "source": "joy", "index": 8, "invert":
+      false}, {"function": "spotlight", "source": "switches", "index": 11, "invert":
+      false}, {"function": "beautiful", "source": "switches", "index": 12, "invert":
+      false}, {"function": "light_red", "source": "switches", "index": 17, "invert":
+      false}, {"function": "light_green", "source": "switches", "index": 22, "invert":
+      false}, {"function": "light_blue", "source": "switches", "index": 10, "invert":
       false}]'
     camera_switches:
     - 5
+    - 3
     - 2
     - 4
-    - 7
+    - 1
