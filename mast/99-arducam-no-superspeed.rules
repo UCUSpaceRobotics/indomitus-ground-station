@@ -16,11 +16,17 @@
 # nano-camera.sh and shifts every camera after it, which silently re-maps the
 # UI tiles.
 #
-# WHAT IS NOT PROVEN: that a camera whose ONLY enumeration is SuperSpeed will
-# re-train at High Speed after being deauthorised, rather than simply going
-# away. If a camera disappears entirely after installing this, that is the case
-# you have hit — the fix is a USB 2.0 cable, and this rule is one file to
-# delete. Nothing here is destructive: `echo 1 > .../authorized` undoes it live.
+# WHAT IS PROVEN NOT TO WORK, measured 2026-08-30: a camera whose ONLY
+# enumeration is SuperSpeed does not re-train at High Speed after being
+# deauthorised. It vanishes. A B0495 on 2-1.2.1, behind one external Realtek
+# hub and already failing the UVC probe control with -71, enumerated at 5000M,
+# was deauthorised by this rule, lost its node, and never came back at 480M on
+# either bus. So do NOT install this expecting it to rescue a wedged camera —
+# the link speed is set by the cable and the socket, and this kernel has no
+# per-port SuperSpeed disable. Use a USB 2.0 cable or a hub-free socket.
+#
+# Nothing here is destructive: `echo 1 > .../authorized` undoes it live, and
+# this rule is one file to delete.
 #
 # Install:  sudo cp 99-arducam-no-superspeed.rules /etc/udev/rules.d/
 #           sudo udevadm control --reload
