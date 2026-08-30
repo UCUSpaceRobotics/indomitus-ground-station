@@ -249,8 +249,32 @@ function normalizeCameras(cameras) {
 
 const LEGACY_JOY_NODES = ['/serial_joy_node', '/switch_reader_node'];
 
+/**
+ * Node names that moved under the /gs namespace, same refactor as
+ * LEGACY_TOPICS below.
+ *
+ * This one bites harder than the topic version, because a wrong node name
+ * breaks *writing* rather than reading: the settings dialog calls
+ * `${interpreterNode}/set_parameters`, and against a stale `/gs_interpreter`
+ * rosbridge answers "Service /gs_interpreter/set_parameters does not exist" —
+ * so Apply fails and no bind can be saved at all.
+ */
+const LEGACY_NODES = {
+  '/gs_interpreter': '/gs/gs_interpreter',
+  '/console_boards': '/gs/console_boards',
+  '/arm_gamepad': '/gs/arm_gamepad',
+  '/joy_to_cmd_vel_node': '/gs/joy_to_cmd_vel_node',
+};
+
+function migrateNode(name, fallback) {
+  return LEGACY_NODES[name] ?? name;
+}
+
 function migrateJoyNode(name, fallback) {
-  return LEGACY_JOY_NODES.includes(name) ? fallback : name;
+  // Two migrations stack here: serial_joy_node and switch_reader_node were
+  // merged into one node, and then that node moved into /gs.
+  if (LEGACY_JOY_NODES.includes(name)) return fallback;
+  return migrateNode(name, fallback);
 }
 
 /**
@@ -297,9 +321,13 @@ function normalize(raw) {
     // localStorage, and pointing the wizard at a node that no longer exists
     // fails as "calibration did not save" with nothing in the log.
     joyNode: migrateJoyNode(String(merged.joyNode || base.joyNode).replace(/\/+$/, ''), base.joyNode),
-    armNode: String(merged.armNode || base.armNode).replace(/\/+$/, ''),
-    interpreterNode: String(merged.interpreterNode || base.interpreterNode).replace(/\/+$/, ''),
-    driveNode: String(merged.driveNode || base.driveNode).replace(/\/+$/, ''),
+    armNode: migrateNode(
+      String(merged.armNode || base.armNode).replace(/\/+$/, ''), base.armNode),
+    interpreterNode: migrateNode(
+      String(merged.interpreterNode || base.interpreterNode).replace(/\/+$/, ''),
+      base.interpreterNode),
+    driveNode: migrateNode(
+      String(merged.driveNode || base.driveNode).replace(/\/+$/, ''), base.driveNode),
     functionBinds: normalizeBinds(merged.functionBinds),
     driveModeBind: normalizeModeBind(merged.driveModeBind),
     twistMode: merged.twistMode === 'curvature' ? 'curvature' : 'row',
