@@ -25,8 +25,16 @@ export const ROVER_FUNCTIONS = [
   { key: 'drive_compact', label: 'Drive compact', group: 'Drive', setbool: '/drive/compact', trigger: '/drive/compact/toggle' },
   // No absolute form: clearing a fault is an action, not a state to hold.
   { key: 'drive_clear_errors', label: 'Clear drive errors', group: 'Drive', setbool: '', trigger: '/drive/clear_errors' },
-  { key: 'spotlight', label: 'Spotlight', group: 'Lights', setbool: '/lights/spotlight', trigger: '/lights/spotlight/toggle' },
-  { key: 'beautiful', label: 'Beautiful lights', group: 'Lights', setbool: '/lights/beautiful', trigger: '/lights/beautiful/toggle' },
+  // Absolute only — the rover's lighting node offers no toggle twins, so
+  // naming one sent every joystick-board bind to a service nobody advertises.
+  // See FUNCTIONS in switch_bindings.py.
+  { key: 'spotlight', label: 'Spotlight', group: 'Lights', setbool: '/lights/spotlight', trigger: '' },
+  { key: 'beautiful', label: 'Beautiful lights', group: 'Lights', setbool: '/lights/beautiful', trigger: '' },
+  // The tower's three lamps, one switch each. traffic_light drives the same
+  // three as a bitmask, which a single switch cannot send.
+  { key: 'light_red', label: 'Red light', group: 'Lights', setbool: '/lights/red', trigger: '' },
+  { key: 'light_green', label: 'Green light', group: 'Lights', setbool: '/lights/green', trigger: '' },
+  { key: 'light_blue', label: 'Blue light', group: 'Lights', setbool: '/lights/blue', trigger: '' },
 ];
 
 export const FUNCTIONS_BY_KEY = Object.fromEntries(

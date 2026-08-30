@@ -11,6 +11,7 @@ import pytest
 
 from indomitus_rover_joy.switch_bindings import (
     CUSTOM_KEY,
+    FUNCTIONS,
     KIND_SETBOOL,
     KIND_TRIGGER,
     SOURCE_JOY,
@@ -275,3 +276,39 @@ def test_each_board_is_bindable_to_its_last_control():
         with pytest.raises(ValueError, match='is not one of them'):
             binds_from_specs([
                 {'function': 'drive_power', 'source': source, 'index': last + 1}])
+
+
+@pytest.mark.parametrize('function, service', [
+    ('spotlight', '/lights/spotlight'),
+    ('beautiful', '/lights/beautiful'),
+])
+def test_the_lights_are_absolute_from_either_board(function, service):
+    """The rover's lighting node offers only the absolute form, so a bind on
+    the joystick board has to reach for it too. It used to prefer a toggle twin
+    that nothing advertises, and the console reported "not available".
+    """
+    for source in (SOURCE_SWITCHES, SOURCE_JOY):
+        binds = binds_from_specs([
+            {'function': function, 'source': source, 'index': 3}])
+        assert binds[0].service == service
+        assert binds[0].kind == KIND_SETBOOL
+
+
+def test_no_function_offers_a_service_the_rover_does_not():
+    """Every service either side of resolve() must be one that exists.
+
+    Kept as an explicit list rather than a rule, because the only way to know
+    is to go and read what the rover advertises: rover_teleop/drive_power_node
+    for the drive_*, rover_peripherals/rover_lighting_node for the lights.
+    """
+    advertised = {
+        '/drive/power', '/drive/power/toggle',
+        '/drive/compact', '/drive/compact/toggle',
+        '/drive/clear_errors',
+        '/lights/spotlight', '/lights/beautiful',
+        '/lights/red', '/lights/green', '/lights/blue',
+    }
+    for function in FUNCTIONS:
+        for source in (SOURCE_SWITCHES, SOURCE_JOY):
+            service, _ = function.resolve(source)
+            assert service in advertised, f'{function.key} from {source} -> {service}'

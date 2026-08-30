@@ -42,15 +42,22 @@ gs_interpreter:
     # Bits 8+ on purpose: DEFAULT_CAMERAS in the UI claims 0-7 for feed
     # selection, and a bit cannot do both.
     #
-    # All four are latching, because all four hold a state on the rover. Drive
-    # compact was on bit 9, which the probe found to be a self-resetting
+    # All of these are latching, because all of them hold a state on the rover.
+    # Drive compact was on bit 9, which the probe found to be a self-resetting
     # button: it was turning compact mode on for as long as the button was
     # held and off again on release. It is on 12, the lowest free toggle.
+    #
+    # The tower lamps are on 13, 17 and 22 — the three highest latching bits in
+    # the probed layout above, so they sit clear of the drive and spotlight
+    # group and of every self-resetting button.
     binds: '[
       {"function": "drive_power",   "source": "switches", "index": 8,  "invert": false},
       {"function": "drive_compact", "source": "switches", "index": 12, "invert": false},
       {"function": "spotlight",     "source": "switches", "index": 10, "invert": false},
-      {"function": "beautiful",     "source": "switches", "index": 11, "invert": false}
+      {"function": "beautiful",     "source": "switches", "index": 11, "invert": false},
+      {"function": "light_red",     "source": "switches", "index": 13, "invert": false},
+      {"function": "light_green",   "source": "switches", "index": 17, "invert": false},
+      {"function": "light_blue",    "source": "switches", "index": 22, "invert": false}
       ]'
     # Switch bits the settings dialog has given to camera selection. -1 means
     # none are claimed; a real list here stops a bit both picking a feed and
