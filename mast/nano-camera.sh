@@ -194,7 +194,13 @@ else
     CAMS=$($SSH "$NANO_SSH" '
         for d in /dev/video*; do
             [ -e "$d" ] || continue
-            v4l2-ctl -d "$d" --list-formats 2>/dev/null | grep -q "Video Capture" || continue
+            n=$(basename "$d")
+            sys=$(readlink -f /sys/class/video4linux/$n/device/..)
+            info="$d|$(basename $sys)|$(cat $sys/speed 2>/dev/null)|$(cat $sys/product 2>/dev/null)"
+            if ! v4l2-ctl -d "$d" --list-formats 2>/dev/null | grep -q "Video Capture"; then
+                echo "SKIP|$info|not a capture node"
+                continue
+            fi
             # Enumerating is not the same as working. A camera that trained at
             # SuperSpeed and then wedged leaves a STALE node behind: the kernel
             # never tears it down because the device went dark without a clean
@@ -204,14 +210,63 @@ else
             # ghost wastes a port and — worse — shifts the port of every
             # camera after it, which silently breaks the UI tile mapping.
             # So demand one real frame before believing in a camera.
+            #
+            # Keep the reason. A node that enumerates and then refuses to stream
+            # is the most confusing failure this script has: lsusb and
+            # ls /dev/video* both look healthy, so a bare "no cameras" reads as
+            # a bug in the script rather than as a wedged camera.
             # (No apostrophes in here: this whole block is a single-quoted
             # string handed to ssh, and one would end it.)
-            timeout 8 v4l2-ctl -d "$d" --stream-mmap --stream-count=1 >/dev/null 2>&1 || continue
-            n=$(basename "$d")
-            sys=$(readlink -f /sys/class/video4linux/$n/device/..)
-            echo "$d|$(basename $sys)|$(cat $sys/speed 2>/dev/null)|$(cat $sys/product 2>/dev/null)"
+            # 2>&1 with no redirect of stdout: v4l2-ctl reports a failed ioctl
+            # on STDOUT, not stderr, so discarding stdout loses the one line
+            # worth reading.
+            err=$(timeout 8 v4l2-ctl -d "$d" --stream-mmap --stream-count=1 2>&1)
+            rc=$?
+            if [ $rc -ne 0 ]; then
+                why=$(echo "$err" | grep -m1 -i "failed\|error" | tr -d "|")
+                [ $rc = 124 ] && why="timed out after 8s${why:+ — $why}"
+                echo "SKIP|$info|no frame: ${why:-VIDIOC_STREAMON did not succeed}"
+                continue
+            fi
+            echo "OK|$info"
         done' 2>/dev/null)
-    [ -n "$CAMS" ] || die "no capture-capable /dev/video* on the Nano — are the cameras plugged in? (check lsusb)"
+
+    # Split the two answers apart: what will be served, and what was found but
+    # rejected. The rejected list is the whole point of the reporting below.
+    REJECTED=$(printf '%s\n' "$CAMS" | sed -n 's/^SKIP|//p')
+    CAMS=$(printf '%s\n' "$CAMS" | sed -n 's/^OK|//p')
+
+    if [ -z "$CAMS" ]; then
+        if [ -z "$REJECTED" ]; then
+            die "no /dev/video* on the Nano at all — is the camera plugged in? (check lsusb)"
+        fi
+        warn "video nodes exist, but none of them produced a frame:"
+        printf '%s\n' "$REJECTED" | while IFS='|' read -r DEV UPATH SPEED CARD WHY; do
+            [ -n "$DEV" ] || continue
+            say "  $DEV  ${CARD:-unknown}"
+            say "    USB $UPATH at ${SPEED}M — $WHY"
+        done
+        # A rejected node at 5000M is not a mystery, it is the known-bad case.
+        # Say so here rather than leaving the operator to find the USB note in
+        # mast/README.md.
+        if printf '%s\n' "$REJECTED" | awk -F'|' '$3 == 5000 { hit = 1 } END { exit !hit }'; then
+            say ""
+            say "At least one node is at 5000M, which is the known-bad case on this"
+            say "board. SuperSpeed here fails the UVC probe control with EPROTO:"
+            say "  uvcvideo: Failed to set UVC probe control : -71"
+            say "so the node never streams and looks exactly like an absent camera."
+            say "Confirm with:  ssh $NANO_SSH dmesg | grep -c -- -71"
+            say ""
+            say "Fixes, best first — software cannot force the link down to USB 2.0:"
+            say "  1. re-cable: a USB 2.0 cable, or a socket with no external hub"
+            say "  2. install the udev rule that deauthorises the SuperSpeed"
+            say "     instance so the camera re-trains at 480M, then replug it:"
+            say "       scp mast/99-arducam-no-superspeed.rules $NANO_SSH:/tmp/"
+            say "       ssh $NANO_SSH sudo cp /tmp/99-arducam-no-superspeed.rules /etc/udev/rules.d/"
+            say "       ssh $NANO_SSH sudo udevadm control --reload"
+        fi
+        die "no camera on the Nano produced a frame"
+    fi
 
     # --dev restricts the set, so one camera can be restarted without disturbing
     # the other's stream.
