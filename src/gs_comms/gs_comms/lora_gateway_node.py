@@ -154,7 +154,7 @@ class LoraGatewayNode(Node):
         # what happened when this defaulted to a /dev/ttyACM<n> guess: it
         # landed on the joystick board and /gs/joy went dead with no error
         # anywhere. Turn it on only with a port pinned by serial number.
-        self.declare_parameter("use_estop_board", False)
+        self.declare_parameter("use_estop_board", True)
         # Never a bare /dev/ttyACM<n>: that index depends on plug order and is
         # not stable across a replug. The joystick and button boards are
         # already pinned by serial number in .env; this is the third board.
