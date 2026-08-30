@@ -9,8 +9,11 @@
 
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
   <depend>geometry_msgs</depend>
   <depend>diagnostic_msgs</depend>
+  <!-- USB link to the e32-e-stop-gs board that carries power/reboot commands. -->
+  <depend>python3-serial</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

@@ -26,21 +26,102 @@ Commands are sent slightly faster than the mast polls. The bridge holds the
 latest command and reverts it to zero if nobody refreshes it, so overshooting
 its rate costs a few bytes of TCP and means a single missed send never lets the
 command go stale mid-manoeuvre.
+
+## Second radio: rover power and the Jetson reset line
+
+This node also carries the emergency commands - cut rover power, restore it,
+pulse the Jetson's reset line - and those go over a *different radio* from
+everything above. Two independent 433 MHz links exist and it matters not to
+confuse them:
+
+    teleop     GS PC --TCP 4001--> mast Pi --E32 ch 0x17, 4.8k air--> rover
+    emergency  GS PC --USB CDC--> ESP32-S3 --E32 ch 0x14, 2.4k air--> rover
+
+The emergency link's rover end is `indomitus-embedded-control/emergency-esp`,
+an ESP32-C3 owning three transistor gates: rover power, the Jetson's SYS_RESET*
+line, and the Jetson's CAN isolation. It already understands three single-byte
+radio commands, defined in that project's `RadioProto`:
+
+    0x00 STOP           -> PowerCut::engage()    (rover power off)
+    0x01 RUN            -> PowerCut::release()   (rover power on)
+    0x02 REBOOT_JETSON  -> JetsonReset::reset()  (one 100 ms SYS_RESET* pulse)
+
+The console end is `e32-e-stop-gs`, the ESP32-S3 on a USB port of this PC.
+
+### Why this talks to the S3 rather than to the radio
+
+The S3 is not a transparent pipe and must not be used as one. It owns the
+physical stop button on the console and it retransmits its own idea of the
+state - RUN every 2 s, STOP every 250 ms. A command injected around it does not
+survive: send a stop over the air directly and the S3's next unsolicited RUN, at
+most two seconds later, powers the rover straight back up.
+
+So the host sets the S3's *desired* state and the S3 combines it with the
+button, exactly as the rover combines the radio command with its own button:
+
+    transmitted = button_pressed OR host_stop
+
+One owner of the radio, and the physical button stays authoritative - no host
+command can talk over someone holding the stop down.
+
+### Host <-> S3 line protocol
+
+ASCII, newline-terminated, at 115200 on the S3's USB console - the same port its
+`[GROUND] ...` logs already come out of, so the two interleave and anything
+unrecognised is ignored as a log line.
+
+    host -> S3   POWER RUN       desired state: let the rover be powered
+                 POWER STOP      desired state: cut rover power
+                 JETSON REBOOT   one-shot, edge-triggered: pulse SYS_RESET*
+                 STATUS          ask for an immediate [STATE] line
+
+    S3 -> host   [STATE] power=run|stop button=up|down host=run|stop
+                         rover=synced|nosync
+                 [ACK] <verb>
+                 [NAK] <verb> <reason>
+
+`power=` is what the S3 is actually transmitting (button OR host) and is the
+only thing reported as the rover's power state. `host=` echoes what the host
+asked for, so a desired state that never took effect is visible rather than
+assumed.
+
+### What the emergency half deliberately does not do
+
+- It sends nothing until explicitly commanded. At startup the desired state is
+  unknown, and silence is correct: the S3 and the rover both hold whatever
+  state they were left in, so restarting this node cannot power-cycle a moving
+  rover.
+- It sends nothing on shutdown, for the same reason.
+- It never restores power on its own. The rover firmware is deliberately not
+  latched - one 0x01 clears its stop with no rearm step - so the latch lives
+  here: once stopped, power returns only on an explicit set_power(true).
 """
 
 import json
 import socket
 import threading
+import time
 
 import rclpy
+import serial
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from geometry_msgs.msg import Twist
-from rclpy.executors import ExternalShutdownException
+from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 from std_msgs.msg import Bool, Float32, String
+from std_srvs.srv import SetBool, Trigger
 
 PATH_LORA = "LORA"
+
+# Verbs sent to the e32-e-stop-gs board over USB. See the protocol section above.
+CMD_POWER_RUN = "POWER RUN"
+CMD_POWER_STOP = "POWER STOP"
+CMD_JETSON_REBOOT = "JETSON REBOOT"
+CMD_STATUS = "STATUS"
+
+POWER_RUN = "run"
+POWER_STOP = "stop"
 
 
 def _clamp_percent(value):
@@ -66,12 +147,49 @@ class LoraGatewayNode(Node):
         # repeat it - the operator may already have let go of the stick.
         self.declare_parameter("cmd_timeout", 0.5)
 
+        # -- emergency board (second radio; see the module docstring) --------
+        # A console that is only watching telemetry has no e-stop board
+        # plugged in, and its serial thread would spend the session logging
+        # open() failures. Same rationale as gs.launch.py's use_joy.
+        self.declare_parameter("use_estop_board", True)
+        # Third serial board on the console. gs_joy owns ttyACM0 (joysticks)
+        # and ttyACM1 (buttons); all three enumerate as the same anonymous
+        # 1a86 USB_Single_Serial bridge, so this order only holds because they
+        # are always plugged in the same order. A udev rule keyed on
+        # ID_SERIAL_SHORT is the real fix - see comms.launch.py.
+        self.declare_parameter("estop_port", "/dev/ttyACM2")
+        self.declare_parameter("estop_baudrate", 115200)
+        # The S3 holds the desired state, so this is not a heartbeat the rover
+        # depends on. It exists so a reconnect re-asserts intent and a board
+        # that missed a line converges within a second.
+        self.declare_parameter("estop_refresh_hz", 1.0)
+        # How long a service call waits for [STATE] to actually show the change
+        # before answering. One radio period plus slack.
+        self.declare_parameter("estop_ack_timeout", 1.5)
+        # No [STATE] line for this long means the board is not talking, even
+        # though the port is still open.
+        self.declare_parameter("estop_state_timeout", 5.0)
+        # A reset pulse is 100 ms and the firmware drops one that overlaps
+        # another. Refusing here gives a real answer instead of a silent drop.
+        self.declare_parameter("reboot_min_interval", 5.0)
+
         self.host = self.get_parameter("bridge_host").value
         self.port = int(self.get_parameter("bridge_port").value)
         self.max_linear = float(self.get_parameter("max_linear").value)
         self.max_angular = float(self.get_parameter("max_angular").value)
         self.cmd_timeout = float(self.get_parameter("cmd_timeout").value)
         send_rate = float(self.get_parameter("send_rate_hz").value)
+
+        self.use_estop_board = bool(self.get_parameter("use_estop_board").value)
+        self.estop_port = self.get_parameter("estop_port").value
+        self.estop_baudrate = int(self.get_parameter("estop_baudrate").value)
+        estop_refresh_hz = float(self.get_parameter("estop_refresh_hz").value)
+        self.estop_ack_timeout = float(
+            self.get_parameter("estop_ack_timeout").value)
+        self.estop_state_timeout = float(
+            self.get_parameter("estop_state_timeout").value)
+        self.reboot_min_interval = float(
+            self.get_parameter("reboot_min_interval").value)
 
         latched = QoSProfile(
             depth=1,
@@ -118,6 +236,53 @@ class LoraGatewayNode(Node):
         self.get_logger().info(
             f"lora_gateway_node: bridge {self.host}:{self.port}, "
             f"sending at {send_rate} Hz while /link/active_path is {PATH_LORA}")
+
+        # -- emergency board --------------------------------------------------
+        # Latched, because these describe a state rather than an event: a UI
+        # panel connecting after the last change still has to render the truth.
+        self.pub_powered = self.create_publisher(
+            Bool, "power/rover_powered", latched)
+        self.pub_board_ok = self.create_publisher(Bool, "power/board_ok", latched)
+        self.pub_estop_link = self.create_publisher(
+            Bool, "power/rover_link", latched)
+        self.pub_console_button = self.create_publisher(
+            Bool, "power/console_button", latched)
+
+        # Same shape as lora/estop above, so one console stop control can drive
+        # the soft stop and the hard power cut without inventing new plumbing.
+        self.create_subscription(Bool, "power/estop", self._on_power_estop, 10)
+
+        self.create_service(SetBool, "power/set_power", self._srv_set_power)
+        self.create_service(Trigger, "power/reboot_jetson", self._srv_reboot_jetson)
+
+        # None until an operator says otherwise: transmitting nothing is what
+        # leaves the rover as it was found.
+        self._desired_power = None
+        self._power_estop_held = False
+
+        self._reported_power = None
+        self._reported_button = None
+        self._reported_host = None
+        self._rover_synced = None
+        self._last_state_at = None
+        self._last_reboot_at = None
+
+        self._estop_serial = None
+        self._estop_write_lock = threading.Lock()
+        self._estop_cv = threading.Condition()
+        self._published_power = {}
+
+        if self.use_estop_board:
+            threading.Thread(target=self._estop_reader, daemon=True).start()
+            self.create_timer(1.0 / estop_refresh_hz, self._estop_refresh_tick)
+            self.create_timer(1.0, self._publish_power_state)
+            self.get_logger().info(
+                f"emergency board on {self.estop_port} @{self.estop_baudrate}, "
+                f"idle until commanded")
+        else:
+            self.get_logger().info(
+                "use_estop_board is false - power/set_power and "
+                "power/reboot_jetson will refuse")
 
     # -- subscriptions -----------------------------------------------------
 
@@ -216,6 +381,280 @@ class LoraGatewayNode(Node):
             "estop": False,
         }
 
+    # -- emergency board: serial ------------------------------------------
+
+    def _estop_open(self):
+        """Open the S3's port without resetting it.
+
+        Opening a CH34x asserts DTR and RTS, which on an ESP32 dev board are
+        wired to EN/BOOT and reset the chip. Restarting this node must not
+        reboot the board holding the rover's power state, so both lines are
+        cleared before open() rather than after it.
+        """
+        ser = serial.Serial()
+        ser.port = self.estop_port
+        ser.baudrate = self.estop_baudrate
+        ser.timeout = 1.0
+        ser.dtr = False
+        ser.rts = False
+        ser.exclusive = True
+        ser.open()
+        return ser
+
+    def _estop_reader(self):
+        """Read the board's [STATE]/[ACK] lines, reconnecting forever."""
+        backoff = 1.0
+        while rclpy.ok():
+            try:
+                ser = self._estop_open()
+                self._estop_serial = ser
+                self.get_logger().info(f"emergency board open on {self.estop_port}")
+                backoff = 1.0
+                # A fresh connection knows nothing. Ask, then re-assert whatever
+                # the operator last decided - the board may have been replugged
+                # while this node held an opinion about the rover.
+                self._estop_write(CMD_STATUS)
+                self._estop_refresh_tick()
+                with ser:
+                    while rclpy.ok():
+                        raw = ser.readline()
+                        if not raw:
+                            continue
+                        self._on_estop_line(raw.decode("utf-8", "replace").strip())
+            except (OSError, serial.SerialException) as exc:
+                self.get_logger().warn(f"emergency board unreachable: {exc}")
+            self._estop_serial = None
+            with self._estop_cv:
+                self._reported_power = None
+                self._reported_button = None
+                self._reported_host = None
+                self._rover_synced = None
+                self._last_state_at = None
+                self._estop_cv.notify_all()
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 10.0)
+
+    def _estop_write(self, verb):
+        ser = self._estop_serial
+        if ser is None:
+            return False
+        try:
+            with self._estop_write_lock:
+                ser.write((verb + "\n").encode())
+            return True
+        except (OSError, serial.SerialException):
+            # The reader thread owns reconnection; just drop this one.
+            return False
+
+    def _on_estop_line(self, line):
+        if line.startswith("[STATE]"):
+            self._on_estop_state(line)
+        elif line.startswith("[NAK]"):
+            self.get_logger().error(f"emergency board rejected a command: {line}")
+        elif line:
+            # [ACK] and the board's own human-readable log.
+            self.get_logger().debug(f"emergency board: {line}")
+
+    def _on_estop_state(self, line):
+        fields = {}
+        for token in line.split()[1:]:
+            key, _, value = token.partition("=")
+            if value:
+                fields[key] = value
+
+        with self._estop_cv:
+            power = fields.get("power")
+            if power in (POWER_RUN, POWER_STOP):
+                if power != self._reported_power:
+                    self.get_logger().warn(f"rover power is now {power.upper()}")
+                self._reported_power = power
+            self._reported_button = fields.get("button")
+            self._reported_host = fields.get("host")
+            rover = fields.get("rover")
+            if rover is not None:
+                self._rover_synced = rover == "synced"
+            self._last_state_at = time.monotonic()
+            self._estop_cv.notify_all()
+
+    def _estop_board_ok(self):
+        stamp = self._last_state_at
+        return (stamp is not None and
+                (time.monotonic() - stamp) < self.estop_state_timeout)
+
+    def _wait_for_power(self, want):
+        """Block until the board reports `want`, or the ack timeout elapses."""
+        deadline = time.monotonic() + self.estop_ack_timeout
+        with self._estop_cv:
+            while self._reported_power != want:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._estop_cv.wait(remaining)
+            return True
+
+    # -- emergency board: desired state ------------------------------------
+
+    def _estop_refresh_tick(self):
+        """Re-assert the desired state so a missed line converges on its own."""
+        if self._desired_power is None:
+            return
+        self._estop_write(
+            CMD_POWER_RUN if self._desired_power else CMD_POWER_STOP)
+
+    def _set_desired_power(self, run, reason):
+        if self._desired_power != run:
+            self.get_logger().warn(
+                f"rover power commanded {'RUN' if run else 'STOP'} ({reason})")
+        self._desired_power = run
+        return self._estop_write(CMD_POWER_RUN if run else CMD_POWER_STOP)
+
+    def _on_power_estop(self, msg):
+        if msg.data:
+            self._power_estop_held = True
+            self._set_desired_power(False, "console e-stop")
+        elif self._power_estop_held:
+            # Cleared, but power stays off. An e-stop that undid itself when the
+            # control sprang back would be an e-stop in name only; the operator
+            # has to ask for power back explicitly.
+            self._power_estop_held = False
+            self.get_logger().warn(
+                "console e-stop released - power stays off until "
+                "power/set_power is called with data: true")
+
+    # -- emergency board: services -----------------------------------------
+
+    def _estop_unavailable(self):
+        """Reason the board cannot be commanded right now, or None."""
+        if not self.use_estop_board:
+            return "use_estop_board is false; this console has no e-stop board"
+        if not self._estop_board_ok():
+            return (f"emergency board on {self.estop_port} is not reporting "
+                    "state; nothing was sent")
+        return None
+
+    def _srv_set_power(self, request, response):
+        unavailable = self._estop_unavailable()
+        if unavailable:
+            response.success = False
+            response.message = unavailable
+            return response
+
+        if request.data and self._power_estop_held:
+            response.success = False
+            response.message = (
+                "console e-stop is held; release it before restoring power")
+            return response
+
+        want = POWER_RUN if request.data else POWER_STOP
+        if not self._set_desired_power(request.data, "service call"):
+            response.success = False
+            response.message = "write to the emergency board failed"
+            return response
+
+        if self._wait_for_power(want):
+            response.success = True
+            response.message = f"rover power {want}"
+        else:
+            # The command went out, the board just has not confirmed it. Say
+            # exactly that rather than claiming either outcome - the refresh
+            # timer keeps re-asserting it regardless.
+            response.success = False
+            response.message = (
+                f"sent, but the board did not report power={want} within "
+                f"{self.estop_ack_timeout:.1f} s")
+        return response
+
+    def _srv_reboot_jetson(self, request, response):
+        del request
+
+        unavailable = self._estop_unavailable()
+        if unavailable:
+            response.success = False
+            response.message = unavailable
+            return response
+
+        if self._reported_power == POWER_STOP:
+            response.success = False
+            response.message = (
+                "rover power is cut; there is nothing to reboot. Restore power "
+                "first")
+            return response
+
+        now = time.monotonic()
+        if self._last_reboot_at is not None:
+            since = now - self._last_reboot_at
+            if since < self.reboot_min_interval:
+                response.success = False
+                response.message = (
+                    f"a reboot was sent {since:.1f} s ago; wait "
+                    f"{self.reboot_min_interval - since:.1f} s")
+                return response
+
+        if not self._estop_write(CMD_JETSON_REBOOT):
+            response.success = False
+            response.message = "write to the emergency board failed"
+            return response
+
+        self._last_reboot_at = now
+        self.get_logger().warn("Jetson reboot pulse requested over the radio")
+        # Edge-triggered and unacknowledged by design: the rover fires a 100 ms
+        # SYS_RESET* pulse and reports nothing back, so there is no state to
+        # wait on. The honest answer is "sent".
+        response.success = True
+        response.message = "reset pulse sent; the Jetson takes ~40 s to come back"
+        return response
+
+    # -- emergency board: reporting ----------------------------------------
+
+    def _publish_power_once(self, publisher, key, value):
+        """Publish only on change - these are latched state topics."""
+        if self._published_power.get(key) == value:
+            return
+        self._published_power[key] = value
+        publisher.publish(Bool(data=value))
+
+    def _publish_power_state(self):
+        board_ok = self._estop_board_ok()
+        self._publish_power_once(self.pub_board_ok, "board", board_ok)
+        self._publish_power_once(
+            self.pub_powered, "power", self._reported_power == POWER_RUN)
+        self._publish_power_once(
+            self.pub_estop_link, "rover", bool(self._rover_synced))
+        self._publish_power_once(
+            self.pub_console_button, "button", self._reported_button == "down")
+
+        status = DiagnosticStatus()
+        status.name = "comms: rover power (emergency radio)"
+        status.hardware_id = str(self.estop_port)
+
+        if not board_ok:
+            status.level = DiagnosticStatus.ERROR
+            status.message = "emergency board not reporting"
+        elif not self._rover_synced:
+            status.level = DiagnosticStatus.WARN
+            status.message = "board up, no rover echo on the radio"
+        elif self._reported_power == POWER_STOP:
+            status.level = DiagnosticStatus.WARN
+            status.message = "rover power is CUT"
+        else:
+            status.level = DiagnosticStatus.OK
+            status.message = "rover powered"
+
+        status.values = [
+            KeyValue(key="port", value=str(self.estop_port)),
+            KeyValue(key="power", value=str(self._reported_power)),
+            KeyValue(key="console_button", value=str(self._reported_button)),
+            KeyValue(key="board_desired", value=str(self._reported_host)),
+            KeyValue(key="node_desired", value=str(self._desired_power)),
+            KeyValue(key="estop_held", value=str(self._power_estop_held)),
+            KeyValue(key="rover_synced", value=str(self._rover_synced)),
+        ]
+
+        msg = DiagnosticArray()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.status.append(status)
+        self.pub_diag.publish(msg)
+
     # -- reporting ---------------------------------------------------------
 
     def _publish_relaying(self):
@@ -275,11 +714,18 @@ class LoraGatewayNode(Node):
 def main():
     rclpy.init()
     node = LoraGatewayNode()
+    # Multi-threaded on purpose: power/set_power blocks for up to
+    # estop_ack_timeout waiting for the board to confirm, and on the
+    # single-threaded default that would also stall power/estop - the one
+    # callback that must never wait behind anything.
+    executor = MultiThreadedExecutor()
     try:
-        rclpy.spin(node)
+        rclpy.spin(node, executor=executor)
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
+        # Deliberately no parting command to the emergency board: whatever the
+        # rover is doing, it keeps doing. See the module docstring.
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

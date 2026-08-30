@@ -29,12 +29,42 @@ def generate_launch_description():
         description='Twist angular.z that corresponds to 100% over the radio'
     )
 
+    # The emergency link is a SECOND radio, nothing to do with the mast Pi:
+    # this console's ESP32-S3 (e32-e-stop-gs) on USB, talking 430 MHz to the
+    # rover's emergency-esp. It carries power on/off and the Jetson reset.
+    #
+    # gs_joy owns ttyACM0 (joysticks) and ttyACM1 (buttons), so this board
+    # lands on ttyACM2 - but all three enumerate as the same anonymous 1a86
+    # USB_Single_Serial bridge, so that only holds while they are plugged in
+    # the same order. Pin it with a udev rule instead:
+    #
+    #   udevadm info -q property -n /dev/ttyACM2 | grep ID_SERIAL_SHORT
+    #   SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", \
+    #     ATTRS{serial}=="<that value>", SYMLINK+="gs-estop-esp"
+    #
+    # then launch with estop_port:=/dev/gs-estop-esp.
+    estop_port_arg = DeclareLaunchArgument(
+        'estop_port',
+        default_value=EnvironmentVariable('ESTOP_BOARD_PORT',
+                                          default_value='/dev/ttyACM2'),
+        description='Serial port of the e-stop board (power cut + Jetson reset)'
+    )
+
+    # A console that only watches telemetry has no e-stop board plugged in.
+    use_estop_board_arg = DeclareLaunchArgument(
+        'use_estop_board',
+        default_value='true',
+        description='Open the e-stop board; false makes the power services refuse'
+    )
+
     mast_host = LaunchConfiguration('mast_host')
 
     return LaunchDescription([
         mast_host_arg,
         max_linear_arg,
         max_angular_arg,
+        estop_port_arg,
+        use_estop_board_arg,
 
         # Decides the path. Publishes /link/active_path, moves no traffic.
         Node(
@@ -49,7 +79,8 @@ def generate_launch_description():
         ),
 
         # Acts on the decision. Relays /cmd_vel_gs over the radio while the
-        # path is LORA, and republishes the radio's own metrics.
+        # path is LORA, and republishes the radio's own metrics. Also owns the
+        # separate emergency radio: power/set_power and power/reboot_jetson.
         Node(
             package='gs_comms',
             executable='lora_gateway_node',
@@ -60,6 +91,10 @@ def generate_launch_description():
                 'bridge_port': 4001,
                 'max_linear': LaunchConfiguration('max_linear'),
                 'max_angular': LaunchConfiguration('max_angular'),
+                'use_estop_board': LaunchConfiguration('use_estop_board'),
+                'estop_port': LaunchConfiguration('estop_port'),
+                # Must match RADIO_BAUD in e32-e-stop-gs's firmware.
+                'estop_baudrate': 115200,
             }],
         ),
     ])
