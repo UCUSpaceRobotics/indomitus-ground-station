@@ -524,10 +524,21 @@ failing silently.
 > does that automatically for `04b4:4950` at `ATTR{speed}=="5000"`.
 >
 > Proven: it removes the stale SuperSpeed twin a wedged camera leaves behind.
-> Not proven: that a camera whose *only* enumeration is SuperSpeed will re-train
-> at High Speed rather than simply vanishing. If a camera disappears after
-> installing this, that is the case you hit; the fix is a USB 2.0 cable, and the
-> rule is one file to delete.
+>
+> **Also now proven, and it is the negative: a camera whose *only* enumeration
+> is SuperSpeed does NOT re-train at High Speed. It just vanishes.** Measured
+> 2026-08-30 on `2-1.2.1`, a B0495 behind one external Realtek hub, which had
+> been failing with `uvcvideo: Failed to set UVC probe control : -71` and 426
+> `-71` errors in that boot. With the rule installed the camera enumerated at
+> 5000M, udev set `authorized=0`, the node went away — and no 480M instance ever
+> appeared, on either bus. So the rule cannot rescue a camera in this state; it
+> only cleans up ghosts.
+>
+> There is no software fix from here: this kernel has no per-port SuperSpeed
+> disable, so the link speed is decided by the cable and the socket. Use a USB
+> 2.0 cable, or a socket with no external hub in the path. `echo 1 >
+> .../authorized` puts the (still broken) node back if you want the previous
+> state, and the rule is one file to delete.
 >
 > Note the node numbers move across reboots — `/dev/video0` was `1-2.3` before
 > one reboot and `1-2.1` after — so read the USB path, never the node number,

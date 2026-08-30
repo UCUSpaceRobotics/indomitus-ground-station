@@ -39,6 +39,19 @@ def generate_launch_description():
         description='YAML file the arm-mapping page saves to and the node loads at startup'
     )
 
+    # Runtime bindings live on /work, not in the package's share directory.
+    # Under --symlink-install that share path is a symlink back into the repo
+    # source, so save_bindings was rewriting a tracked file: the console's own
+    # wiring ended up in git, and the shipped defaults were lost the first time
+    # anyone pressed Apply. Same place the arm mapping and the stick
+    # calibration persist to.
+    gs_bindings_file_arg = DeclareLaunchArgument(
+        'gs_bindings_file',
+        default_value=EnvironmentVariable(
+            'GS_BINDINGS_FILE', default_value='/work/config/gs_bindings.yaml'),
+        description='YAML file the settings dialog saves rover-function binds to'
+    )
+
     arm_joy_topic_arg = DeclareLaunchArgument(
         'arm_joy_topic',
         default_value=EnvironmentVariable('ARM_JOY_TOPIC', default_value='/arm/joy'),
@@ -61,6 +74,7 @@ def generate_launch_description():
         button_board_port_arg,
         calibration_file_arg,
         arm_bindings_file_arg,
+        gs_bindings_file_arg,
         arm_joy_topic_arg,
         # One node, both boards. They are two USB ports but one panel, and
         # the shared serial reader is what lets either board reconnect on its
@@ -103,6 +117,11 @@ def generate_launch_description():
                 'linear_x_scale': 0.5,
                 'linear_y_scale': 0.5,
                 'angular_z_scale': 1.0,
+                # Second dead band, on top of console_boards' own. That one is
+                # measured around the calibrated centre and so misses a stick
+                # that rests off-centre; this one is applied to the axis as it
+                # arrives, and also covers a gamepad publishing /joy directly.
+                'deadzone': 0.05,
                 'joy_timeout': 0.2,
                 # The sticks run at 200 Hz; the rover link does not need to.
                 'publish_rate': 50.0,
@@ -171,7 +190,13 @@ def generate_launch_description():
             name='gs_interpreter',
             # The file twice over: once as a parameter file for its contents,
             # once as a path so the node knows where to write it back.
-            parameters=[gs_bindings, {'bindings_file': gs_bindings}],
+            # The shipped file seeds the defaults; bindings_file is where
+            # save_bindings writes and where startup restores from, so a
+            # console that has been configured keeps its own wiring and the
+            # package keeps its defaults.
+            parameters=[gs_bindings, {
+                'bindings_file': LaunchConfiguration('gs_bindings_file'),
+            }],
             output='screen'
         )
     ])

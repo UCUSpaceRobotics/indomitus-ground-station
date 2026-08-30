@@ -73,6 +73,30 @@ try {
     if (!ok) bad += 1;
     console.log(`${ok ? 'ok  ' : 'FAIL'} ${what.padEnd(22)} ${needle}`);
   }
+
+  // Moving a bind between the two boards. The settings row only draws its
+  // source and index pickers while the bind is bound, so an index that comes
+  // back unbound takes the pickers with it and the operator cannot finish
+  // choosing a control — which is what a switch-to-joystick move used to do
+  // for every index above 8.
+  const { fitIndexToSource, SOURCE_JOY, SOURCE_SWITCHES } =
+    await vite.ssrLoadModule('/src/lib/roverFunctions.js');
+
+  const cases = [
+    ['switches[12] -> joystick', SOURCE_JOY, 12, 8],
+    ['switches[10] -> joystick', SOURCE_JOY, 10, 8],
+    ['switches[8]  -> joystick', SOURCE_JOY, 8, 8],
+    ['joystick[4]  stays put', SOURCE_JOY, 4, 4],
+    ['joystick[4]  -> switches', SOURCE_SWITCHES, 4, 4],
+    ['switches[22] -> switches', SOURCE_SWITCHES, 22, 22],
+    ['unbound stays unbound', SOURCE_JOY, -1, -1],
+  ];
+  for (const [what, source, index, want] of cases) {
+    const got = fitIndexToSource(source, index);
+    const ok = got === want;
+    if (!ok) bad += 1;
+    console.log(`${ok ? 'ok  ' : 'FAIL'} ${what.padEnd(22)} -> ${got}${ok ? '' : ` (want ${want})`}`);
+  }
   console.log(bad ? `\n${bad} check(s) failed` : '\nSettings dialog renders the bind list.');
   process.exitCode = bad ? 1 : 0;
 } catch (err) {

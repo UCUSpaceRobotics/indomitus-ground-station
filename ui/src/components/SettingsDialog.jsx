@@ -13,9 +13,11 @@ import { parameterRequest, useServiceCaller } from '../ros/useService';
 import {
   CUSTOM_KEY,
   FUNCTION_GROUPS,
+  CONSOLE_MODES,
   SOURCE_JOY,
   SOURCE_LIMITS,
   SOURCE_SWITCHES,
+  fitIndexToSource,
   resolveCall,
 } from '../lib/roverFunctions';
 import { usePanelButtons } from '../hooks/usePanelButtons';
@@ -89,6 +91,50 @@ export default function SettingsDialog({ open, onClose }) {
       dialog.close();
     }
   }, [open]);
+
+  /**
+   * Read the binds back from the node whenever the dialog opens.
+   *
+   * The node is the source of truth: it persists them itself and keeps them
+   * across restarts, while this browser's copy is only an editing draft. A
+   * console opened from a second machine, or after the cache was cleared,
+   * used to show everything unbound while the rover was correctly wired —
+   * which reads as "my configuration vanished".
+   */
+  useEffect(() => {
+    if (!open || !connected) return;
+    let cancelled = false;
+    callService(
+      `${configRef.current.interpreterNode}/get_parameters`,
+      'rcl_interfaces/srv/GetParameters',
+      { names: ['binds'] },
+    )
+      .then((response) => {
+        if (cancelled) return;
+        const raw = response?.values?.[0]?.string_value;
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed) || parsed.length === 0) return;
+        setDraft((prev) => ({
+          ...prev,
+          functionBinds: parsed.map((b, i) => ({
+            id: `node${i}`,
+            function: String(b.function || ''),
+            source: b.source === SOURCE_JOY ? SOURCE_JOY : SOURCE_SWITCHES,
+            index: Number.isFinite(Number(b.index)) ? Math.round(Number(b.index)) : UNBOUND,
+            invert: Boolean(b.invert),
+            ...(b.function === CUSTOM_KEY ? { service: String(b.service || '') } : {}),
+          })),
+        }));
+        setBindStatus({ tone: 'ok', text: 'Read the binds from the rover.' });
+      })
+      // Not an error worth shouting about: the node may simply not be up, and
+      // the local draft is a usable starting point.
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [open, connected, callService]);
 
   // The camera table saves itself. Retargeting a feed is done *while looking at
   // the feed*, so the tiles behind the dialog have to follow the edit, and an
@@ -169,16 +215,18 @@ export default function SettingsDialog({ open, onClose }) {
     }));
 
   const patchBind = (index, patch) => {
+    let next = patch;
     if (patch.index !== undefined || patch.source !== undefined) {
       const current = draft.functionBinds[index];
       const source = patch.source ?? current.source;
-      const next = patch.index ?? current.index;
-      if (next >= 0) claimControl(source, next, index);
+      const wanted = fitIndexToSource(source, patch.index ?? current.index);
+      next = { ...patch, index: wanted };
+      if (wanted >= 0) claimControl(source, wanted, index);
     }
     setDraft((prev) => ({
       ...prev,
       functionBinds: prev.functionBinds.map((bind, i) =>
-        i === index ? { ...bind, ...patch } : bind,
+        i === index ? { ...bind, ...next } : bind,
       ),
     }));
   };
@@ -230,6 +278,7 @@ export default function SettingsDialog({ open, onClose }) {
       invert: false,
       ...patch,
     };
+    bind.index = fitIndexToSource(bind.source, bind.index);
     if (bind.index >= 0) claimControl(bind.source, bind.index, -1);
     setDraft((prev) => ({ ...prev, functionBinds: [...prev.functionBinds, bind] }));
   };
@@ -247,51 +296,16 @@ export default function SettingsDialog({ open, onClose }) {
       functionBinds: prev.functionBinds.filter((b) => b.function !== key),
     }));
 
-  /**
-   * Console modes are not rover services, so they are not function binds: each
-   * is a pair of parameters on the node that builds the Twist. They are listed
-   * with the functions anyway, because from the console it is the same gesture
-   * — pick a switch, get a behaviour.
-   */
-  const CONSOLE_MODES = [
-    {
-      key: 'driveModeBind',
-      name: 'Steering mode',
-      calls: 'row / curvature',
-      hint: 'Curvature: the yaw stick sets a turn radius, so one arc holds across the '
-        + 'speed range. Row: the yaw stick is the yaw rate directly, which is what '
-        + 'strafing and precise placement want.',
-    },
-    {
-      key: 'vyBind',
-      name: 'Strafe (vy)',
-      calls: 'sideways motion',
-      hint: 'Off by default, as on the rover. With strafe live a diagonal stick crabs '
-        + 'instead of turning. While it is off, row mode also mirrors yaw in reverse so '
-        + 'the rover steers like a car.',
-    },
-    {
-      key: 'grannyBind',
-      name: 'Granny mode',
-      calls: 'speed \u00d70.1',
-      hint: 'Scales the whole command — yaw included, so a turn keeps its shape '
-        + 'instead of tightening as you slow down.',
-    },
-    {
-      key: 'muteBind',
-      name: 'No output',
-      calls: 'stop commanding',
-      hint: 'Hands the drive to the onboard gamepad or autonomy without killing the '
-        + 'node. One zero Twist goes out first, then silence: twist_mux holds the '
-        + 'last command it was given, so going quiet alone would leave the rover '
-        + 'running on it.',
-    },
-  ];
 
   const bindOf = (key) => draft[key] || { source: SOURCE_SWITCHES, index: UNBOUND };
 
+  // Same board-width rule as the function binds: these are the same gesture on
+  // a different node, and an out-of-range index is just as invisible there.
   const setModeBind = (key, patch) =>
-    setDraft((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
+    setDraft((prev) => {
+      const next = { ...prev[key], ...patch };
+      return { ...prev, [key]: { ...next, index: fitIndexToSource(next.source, next.index) } };
+    });
 
   // Press-to-bind, the same gesture as the arm mapping page. While a function
   // is learning, the next control that moves claims it.
@@ -383,6 +397,26 @@ export default function SettingsDialog({ open, onClose }) {
         });
         return;
       }
+
+      // The node has taken them, so this is the live wiring now — commit it to
+      // the config the panels read. Applying is its own gesture, separate from
+      // closing the dialog, and until this the control box went on showing the
+      // previous labels beside a switch the rover had just been told about,
+      // which reads as the bind not having taken at all.
+      //
+      // Before save_bindings on purpose: that only writes the YAML back, and
+      // failing to persist does not make the binds any less live.
+      updateConfig({
+        functionBinds: draft.functionBinds,
+        driveModeBind: draft.driveModeBind,
+        twistMode: draft.twistMode,
+        vyBind: draft.vyBind,
+        vyEnabled: draft.vyEnabled,
+        grannyBind: draft.grannyBind,
+        grannyMode: draft.grannyMode,
+        muteBind: draft.muteBind,
+        mute: draft.mute,
+      });
 
       const saved = await callService(
         `${draft.interpreterNode}/save_bindings`,

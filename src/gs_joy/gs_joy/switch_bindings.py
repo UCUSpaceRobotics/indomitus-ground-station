@@ -20,6 +20,16 @@ SOURCE_JOY = 'joy'
 SOURCE_SWITCHES = 'switches'
 SOURCES = (SOURCE_JOY, SOURCE_SWITCHES)
 
+#: How many controls each board actually reports: the joystick board has 9
+#: switches wired off its PCF8575, the button board 23. An index past the end
+#: of its own board is the one wiring mistake nobody can see — the panel draws
+#: only the controls a board has, so the row never appears to be labelled, and
+#: EdgeTracker skips an index no frame ever reaches, so the function silently
+#: does nothing. It is easy to land on by accident: moving a bind from the
+#: button board to the joystick one keeps the index it already had.
+#: Mirrored in ui/src/lib/roverFunctions.js as SOURCE_LIMITS.
+SOURCE_WIDTHS = {SOURCE_JOY: 9, SOURCE_SWITCHES: 23}
+
 #: A latching switch sends its absolute position with SetBool; a momentary
 #: button has no position and can only fire an edge, so it calls the Trigger
 #: twin. Which one a binding uses is derived from its source, never chosen by
@@ -70,6 +80,12 @@ FUNCTIONS = (
     Function('drive_clear_errors', 'Clear drive errors', '', '/drive/clear_errors'),
     Function('spotlight', 'Spotlight', '/lights/spotlight', '/lights/spotlight/toggle'),
     Function('beautiful', 'Beautiful lights', '/lights/beautiful', '/lights/beautiful/toggle'),
+    # The tower's three lamps, one switch each. lights/traffic_light drives the
+    # same lamps together, but a console switch holds exactly one of them and
+    # cannot describe the other two, so each gets its own pair.
+    Function('light_red', 'Red light', '/lights/red', '/lights/red/toggle'),
+    Function('light_green', 'Green light', '/lights/green', '/lights/green/toggle'),
+    Function('light_blue', 'Blue light', '/lights/blue', '/lights/blue/toggle'),
 )
 
 FUNCTIONS_BY_KEY = {f.key: f for f in FUNCTIONS}
@@ -159,6 +175,11 @@ def binds_from_specs(specs, claimed=()) -> list:
         index = spec.get('index', -1)
         if not isinstance(index, int) or isinstance(index, bool) or index < 0:
             raise ValueError(f'{name}: index must be a non-negative int, got {index!r}')
+        width = SOURCE_WIDTHS[source]
+        if index >= width:
+            raise ValueError(
+                f'{name}: the {source} board has {width} controls, '
+                f'so {source}[{index}] is not one of them')
 
         if name == CUSTOM_KEY:
             service = spec.get('service', '')
