@@ -11,6 +11,7 @@ import pytest
 
 from indomitus_rover_joy.switch_bindings import (
     CUSTOM_KEY,
+    FUNCTIONS,
     KIND_SETBOOL,
     KIND_TRIGGER,
     SOURCE_JOY,
@@ -250,3 +251,73 @@ def test_invert_still_reaches_the_binding():
         'function': 'drive_power', 'source': SOURCE_SWITCHES,
         'index': 0, 'invert': True}])
     assert binds[0].desired(0) is True and binds[0].desired(1) is False
+
+
+def test_a_bind_past_the_end_of_its_board_is_refused():
+    """The failure it prevents: switch 12 exists on the button board and not on
+    the joystick one, so moving the bind across leaves it somewhere no frame
+    reaches. The old set built cleanly and then did nothing at all.
+    """
+    with pytest.raises(ValueError, match='9 controls'):
+        binds_from_specs([
+            {'function': 'drive_compact', 'source': SOURCE_JOY, 'index': 12}])
+
+    # The same index is fine on the wider board.
+    binds = binds_from_specs([
+        {'function': 'drive_compact', 'source': SOURCE_SWITCHES, 'index': 12}])
+    assert binds[0].index == 12
+
+
+def test_each_board_is_bindable_to_its_last_control():
+    for source, last in ((SOURCE_JOY, 8), (SOURCE_SWITCHES, 22)):
+        binds = binds_from_specs([
+            {'function': 'drive_power', 'source': source, 'index': last}])
+        assert binds[0].index == last
+        with pytest.raises(ValueError, match='is not one of them'):
+            binds_from_specs([
+                {'function': 'drive_power', 'source': source, 'index': last + 1}])
+
+
+@pytest.mark.parametrize('function, service', [
+    ('spotlight', '/lights/spotlight'),
+    ('beautiful', '/lights/beautiful'),
+    ('light_red', '/lights/red'),
+    ('light_green', '/lights/green'),
+    ('light_blue', '/lights/blue'),
+])
+def test_every_light_offers_both_forms(function, service):
+    """A latching panel switch sends its position; the toggle twin is there
+    for anything that can only fire an edge. rover_lighting_node advertises
+    both for every light, so neither source is left without one.
+    """
+    absolute = binds_from_specs([
+        {'function': function, 'source': SOURCE_SWITCHES, 'index': 3}])
+    assert absolute[0].service == service
+    assert absolute[0].kind == KIND_SETBOOL
+
+    edge = binds_from_specs([{'function': function, 'source': SOURCE_JOY, 'index': 3}])
+    assert edge[0].service == f'{service}/toggle'
+    assert edge[0].kind == KIND_TRIGGER
+
+
+def test_no_function_offers_a_service_the_rover_does_not():
+    """Every service either side of resolve() must be one that exists.
+
+    Kept as an explicit list rather than a rule, because the only way to know
+    is to go and read what the rover advertises: rover_teleop/drive_power_node
+    for the drive_*, rover_peripherals/rover_lighting_node for the lights.
+    """
+    advertised = {
+        '/drive/power', '/drive/power/toggle',
+        '/drive/compact', '/drive/compact/toggle',
+        '/drive/clear_errors',
+        '/lights/spotlight', '/lights/spotlight/toggle',
+        '/lights/beautiful', '/lights/beautiful/toggle',
+        '/lights/red', '/lights/red/toggle',
+        '/lights/green', '/lights/green/toggle',
+        '/lights/blue', '/lights/blue/toggle',
+    }
+    for function in FUNCTIONS:
+        for source in (SOURCE_SWITCHES, SOURCE_JOY):
+            service, _ = function.resolve(source)
+            assert service in advertised, f'{function.key} from {source} -> {service}'
