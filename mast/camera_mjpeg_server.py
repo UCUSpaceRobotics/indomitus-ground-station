@@ -1,29 +1,7 @@
 #!/usr/bin/env python3
-"""Serve a V4L2 camera as MJPEG over HTTP. Runs on the Jetson Nano.
+"""Serve a V4L2 camera as MJPEG over HTTP. Runs on the rover's Jetson.
 
-WHY THIS EXISTS instead of mjpg-streamer, and instead of ROS.
-
-Not ROS: this Nano is JetPack 4.5.1 — Ubuntu 18.04, kernel 4.9.201-tegra. ROS 2
-Humble has no binaries for 18.04, so there is no v4l2_camera_node to publish
-with. See the header of mast/nano-camera.sh for the full reasoning.
-
-Not mjpg-streamer: it builds cleanly here but segfaults inside input_uvc before
-it opens the device, on a camera that offers exactly one mode. Debugging a
-third-party C plugin on an EOL platform is not the shortest path to video, and
-the usual reason to prefer it — relaying MJPEG frames untouched — does not apply
-to this camera anyway. The Arducam B0495 on this box offers only YUYV, so
-something has to encode regardless. OpenCV 4.1.1 and numpy ship with JetPack, so
-this needs nothing installed.
-
-Cost: 960x600 at 10 fps is ~5.8 MPix/s of JPEG encode, a fraction of one A57
-core. That headroom is the whole reason this is affordable — it would not be at
-1080p30, and if the camera is ever moved to a real USB 3.0 port (it is currently
-on a 480M path, which is why it offers one mode) this should be re-measured.
-
-Each frame is encoded ONCE and handed to every connected client, so a second
-viewer costs bandwidth but no extra CPU. Capture runs in its own thread and
-never blocks on a slow client: clients are always served the newest frame, and a
-viewer that cannot keep up drops frames rather than stalling the camera.
+See the header of mast/start-cameras.sh for why this exists instead of ROS.
 
 URL paths deliberately match mjpg-streamer's, because the UI derives the
 snapshot URL from the stream URL by swapping action=stream for action=snapshot
@@ -46,15 +24,11 @@ from urllib.parse import parse_qs, urlparse
 
 import cv2
 
-BOUNDARY = 'nanomjpegframe'
+BOUNDARY = 'cameramjpegframe'
 
 
 def enumerate_modes(device):
-    """{(w, h): [fps, ...]} the device actually offers, via v4l2-ctl.
-
-    OpenCV will accept any width/height/fps you hand it and then quietly give
-    you something else, so ask V4L2 directly instead of trusting the setters.
-    """
+    """{(w, h): [fps, ...]} the device actually offers, via v4l2-ctl."""
     try:
         out = subprocess.check_output(
             ['v4l2-ctl', '-d', device, '--list-formats-ext'],
@@ -79,14 +53,7 @@ def enumerate_modes(device):
 
 
 def pick_mode(modes, want_w, want_h, want_fps):
-    """Snap a request onto a mode the camera has. Returns (w, h, fps, note).
-
-    This matters because the same camera offers different modes at different
-    USB speeds: on a 480M path the B0495 gives 960x600 at 10 fps and nothing
-    else, while on a 5000M path it gives 15/30/60/80 and no 10 at all. A request
-    carried over from one to the other selects a rate that does not exist, and
-    the capture then fails in a way that looks like a broken camera.
-    """
+    """Snap a request onto a mode the camera has. Returns (w, h, fps, note)."""
     if not modes:
         return want_w, want_h, want_fps, 'unverified (no format list)'
 
@@ -94,8 +61,7 @@ def pick_mode(modes, want_w, want_h, want_fps):
     if (want_w, want_h) in modes:
         size = (want_w, want_h)
     else:
-        # Largest on offer: if the requested size is gone, the operator would
-        # rather have the best picture available than no picture.
+        # Requested size is gone: fall back to the largest one on offer.
         size = max(modes, key=lambda s: s[0] * s[1])
         notes.append('%dx%d not offered' % (want_w, want_h))
 
@@ -114,11 +80,7 @@ def pick_mode(modes, want_w, want_h, want_fps):
 
 
 class Camera:
-    """Grabs frames in the background, holding only the newest JPEG.
-
-    Deliberately last-frame-wins rather than a queue: for a live view a backlog
-    is worse than a gap, and an unbounded queue on a 4GB board is a slow leak.
-    """
+    """Grabs frames in the background, holding only the newest JPEG."""
 
     def __init__(self, device, width, height, fps, quality):
         self.device = device
@@ -137,7 +99,6 @@ class Camera:
         self.started = time.time()
 
     def open(self):
-        # Snap onto a real mode before touching OpenCV; see pick_mode().
         w, h, fps, note = pick_mode(enumerate_modes(self.device),
                                     self.width, self.height, self.fps)
         if note != 'exact':
@@ -149,15 +110,11 @@ class Camera:
         cap = cv2.VideoCapture(self.device, cv2.CAP_V4L2)
         if not cap.isOpened():
             raise RuntimeError('cannot open %s' % self.device)
-        # The B0495 offers YUYV only. Setting FOURCC explicitly stops OpenCV
-        # from negotiating something the camera will refuse.
         cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'YUYV'))
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
         cap.set(cv2.CAP_PROP_FPS, self.fps)
-        # Report what we actually got, not what we asked for — a camera that
-        # silently substitutes a mode is otherwise invisible until the picture
-        # looks wrong.
+        # Report what the camera actually gave us, not what was asked for.
         got = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
                int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
                cap.get(cv2.CAP_PROP_FPS))
@@ -185,9 +142,8 @@ class Camera:
                     self.frames += 1
                     self._cond.notify_all()
             except Exception as exc:            # noqa: BLE001 - keep serving
-                # A USB camera on a hub chain does drop out. Reopen rather than
-                # exit, so the feed comes back on its own instead of needing
-                # someone to ssh in.
+                # Reopen rather than exit, so a dropped camera recovers on its
+                # own instead of needing someone to ssh in and restart it.
                 self.errors += 1
                 print('capture error: %s (reopening)' % exc, file=sys.stderr, flush=True)
                 if cap is not None:

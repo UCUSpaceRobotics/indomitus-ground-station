@@ -424,8 +424,8 @@ no binaries for 18.04**, so nothing in this section applies to it: no
 difference from the Orin NX, where the arducams were ordinary ROS topics.
 
 The cameras are **Arducam B0495 (USB3 2.3MP)**, driverless UVC, so `uvcvideo`
-handles them. `mast/nano-camera.sh` discovers every capture-capable
-`/dev/video*`, deploys `mast/nano_mjpeg.py`, and starts **one server process per
+handles them. `mast/start-cameras.sh` discovers every capture-capable
+`/dev/video*`, deploys `mast/camera_mjpeg_server.py`, and starts **one server process per
 camera** — first on **port 8090**, each further one on the next port up. Not
 8080: `web_video_server` owns that on the GS. A UI camera row takes each URL
 directly; see "Cameras outside ROS" in `ui/README.md`.
@@ -451,7 +451,7 @@ rate, which is a trap when re-cabling:
 Neither offers MJPEG, so the Nano always JPEG-encodes in software. That encode
 is single-threaded: 960x600@10 measured **23% of one core**, so 960x600@30 is
 ~70% and 1920x1200 at any usable rate is out of reach without NVJPEG or a
-threaded encoder. `nano_mjpeg.py` snaps a requested mode onto one the camera
+threaded encoder. `camera_mjpeg_server.py` snaps a requested mode onto one the camera
 actually has and logs the substitution, so a stale `--fps` degrades instead of
 failing silently.
 
@@ -478,7 +478,7 @@ failing silently.
 >          └─ 2-1.2.3.2  Arducam
 > ```
 >
-> `nano-camera.sh` counts the external hubs per camera and warns. Note the same
+> `start-cameras.sh` counts the external hubs per camera and warns. Note the same
 > chain at 480M was completely stable — the whole rover harness (Alfa, CAN,
 > cdc_acm) runs through it on bus 1 — so the fault appears only once SuperSpeed
 > is negotiated.
@@ -497,7 +497,7 @@ failing silently.
 > 960x600@10 instead of @30 — and 960x600 is what the rest of the rover's
 > arducams run anyway. USB 3.0 on this board is not worth the frame rate.
 >
-> `nano-camera.sh` therefore defaults every camera to the USB 2.0 mode, and
+> `start-cameras.sh` therefore defaults every camera to the USB 2.0 mode, and
 > warns on any camera that came up at 5000M. It cannot *force* the link down:
 > kernel 4.9 on this Tegra exposes no per-port SuperSpeed disable, `authorized`
 > toggling just re-enumerates at 5000M, and unbinding the hub tree drops the
@@ -514,7 +514,7 @@ failing silently.
 >
 > This is worth more than tidiness: the ghost consumes a port, which shifts
 > every camera after it by one and silently breaks the UI tile mapping. So
-> `nano-camera.sh` requires one real captured frame from a node before it will
+> `start-cameras.sh` requires one real captured frame from a node before it will
 > serve it, rather than trusting enumeration.
 
 > **Enforcing USB 2.0: `mast/99-arducam-no-superspeed.rules`.** Deauthorising a
@@ -547,7 +547,7 @@ failing silently.
 `mjpg-streamer` was tried first and rejected. It builds here — `libv4l-dev` is
 the non-obvious dependency — but segfaults inside `input_uvc` before it opens
 the device. Its one advantage, relaying MJPEG untouched, does not apply to a
-camera that offers no MJPEG. `nano_mjpeg.py` needs nothing installed: the OpenCV
+camera that offers no MJPEG. `camera_mjpeg_server.py` needs nothing installed: the OpenCV
 and numpy that ship with JetPack are enough, so it needs no apt and no sudo.
 
 If that camera ever has to be a real ROS topic, the route is a container, and

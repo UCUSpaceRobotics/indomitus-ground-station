@@ -28,7 +28,7 @@ export const VIDEO_MODES = {
 
 /**
  * The Jetson Nano's cameras are NOT ROS topics — it runs Ubuntu 18.04, where
- * Humble has no binaries, so there is no v4l2_camera_node. mast/nano-camera.sh
+ * Humble has no binaries, so there is no v4l2_camera_node. mast/start-cameras.sh
  * serves each one over plain HTTP instead, one port per camera counting up from
  * 8090. A camera row holding an absolute URL is read straight by the browser;
  * see isDirectUrl() below and "Cameras outside ROS" in README.md.

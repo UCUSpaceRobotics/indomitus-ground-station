@@ -1,45 +1,19 @@
 #!/bin/bash
-# Serve the Nano's Arducam as plain MJPEG over HTTP, no ROS.
+# Serve the rover's Arducam(s) as plain MJPEG over HTTP, no ROS.
 #
-#     ./mast/nano-camera.sh                 # probe, deploy, start, verify
-#     ./mast/nano-camera.sh --probe         # only report what the camera offers
-#     ./mast/nano-camera.sh --stop
-#     ./mast/nano-camera.sh --dry
+#     ./mast/start-cameras.sh               # probe, deploy, start, verify
+#     ./mast/start-cameras.sh --probe       # only report what the camera offers
+#     ./mast/start-cameras.sh --stop
+#     ./mast/start-cameras.sh --dry
 #
-# WHY THIS EXISTS, instead of the rover's ROS path.
-#
-# Every other camera on this project reaches the console the same way: a
-# v4l2/gscam node publishes sensor_msgs/Image, Fast DDS carries it over the
-# link, and web_video_server on the GS re-serves it as MJPEG for the UI tiles.
-# That needs ROS 2 Humble on the camera's machine.
-#
-# HISTORY, because the reason this exists has changed underneath it.
-# It was written for a Nano 4GB on JetPack 4.5.1 (Ubuntu 18.04, kernel
-# 4.9.201-tegra, L4T R32.5.2), where Humble had no 18.04 binaries and so there
-# was no v4l2_camera_node to run. As of 2026-08-31 the rover box is an **Orin
-# Nano Super on Ubuntu 22.04.5 / L4T R36.5.2**, where that constraint is gone —
-# a real ROS camera node IS possible again and is the better long-term answer.
-# This HTTP path is kept because it works today and needs nothing installed.
-#
-# What did NOT survive the swap: the host has no `cv2`. JetPack 6 does not ship
-# the python binding, the rover has no default route so `apt install` cannot
-# reach an archive, and numpy alone is not enough. The `rover_prod` container
-# does have cv2 4.5.4 + numpy, runs `network_mode: host` and privileged, and
-# sees /dev/video*, so the server runs THERE and still binds the host ports.
-# CAM_RUNTIME below picks host python3 when it can and the container otherwise.
-#
-# The camera itself is unaffected: the Arducam B0495 is a driverless UVC device
-# the stock uvcvideo handles. So mast/nano_mjpeg.py captures it and serves MJPEG
-# over HTTP, and a UI camera tile points straight at that URL.
-#
-# The trade, stated plainly: this feed is outside ROS. No rosbag recording, no
-# per-frame timestamps, and the UI's `ros` transport mode cannot carry it (the
-# tile stays on HTTP — see isDirectUrl() in ui/src/config.js). Switch gating
-# still works, because that is decided in the browser. If this camera ever has
-# to be a real ROS topic, the route is a container, and the image is
-# dustynv/ros:humble-ros-base-l4t-r32.7.1 — Humble built from source on an L4T
-# r32 base. Do NOT reach for a stock Jammy image: on kernel 4.9 it dies with
-# `error adding seccomp filter rule for syscall clone3`.
+# Every other camera on this project publishes over ROS 2 (v4l2/gscam node ->
+# Fast DDS -> web_video_server on the GS). This camera bypasses that: its host
+# has no working cv2 for a ROS node to relay through, but the Arducam B0495 is
+# a driverless UVC device the stock uvcvideo handles fine, so
+# mast/camera_mjpeg_server.py captures it directly and serves MJPEG over HTTP,
+# and a UI camera tile points straight at that URL. The trade: this feed is
+# outside ROS — no rosbag recording, no per-frame timestamps, and the UI's
+# `ros` transport mode cannot carry it (see isDirectUrl() in ui/src/config.js).
 #
 # Point a camera tile at the URL this prints: open the UI settings dialog and
 # type it into the "Image topic / URL" box of any row.
@@ -52,56 +26,43 @@ NANO_SSH=${NANO_SSH:-indomitus-rover@10.42.0.1}
 # web_video_server owns that on the GS.
 NANO_PORT=${NANO_PORT:-8090}
 NANO_DEV=${NANO_DEV:-}             # empty = serve every capture-capable node
-# Fallback runtime when the host python3 has no cv2 (see the note in the header).
+# Fallback runtime when the host python3 has no cv2 (see the note by CAM_RUNTIME below).
 CAM_CONTAINER=${CAM_CONTAINER:-rover_prod}
-CAM_CREMOTE=${CAM_CREMOTE:-/tmp/nano_mjpeg.py}
-# What the B0495 offers depends on the USB speed it enumerated at, and the two
-# lists share no frame rate at all:
+CAM_CREMOTE=${CAM_CREMOTE:-/tmp/camera_mjpeg_server.py}
+# What the B0495 offers depends on the USB speed it enumerated at:
 #
 #   480M (USB 2.0)  960x600 @ 10 only
 #   5000M (USB 3.0) 1920x1200 @ 50/30/15, 960x600 @ 80/60/30/15 — no 10
 #
-# so a request carried across a re-cabling selects a rate that does not exist.
-# nano_mjpeg.py snaps whatever is asked for onto a mode the camera actually has
-# and says so in its log, rather than failing in a way that looks like a broken
-# camera. Neither speed offers MJPEG, so the Nano always encodes.
+# THE DEFAULT IS THE USB 2.0 MODE, DELIBERATELY, FOR EVERY CAMERA: SuperSpeed
+# is not reliable with these cameras on this board (see the USB note in
+# mast/README.md), so 960x600@10 is used even for a camera that enumerated at
+# 5000M, because it makes camera_mjpeg_server.py pick the slowest, safest rate
+# on offer. This does NOT force the USB link speed itself — that is decided by
+# the cable and socket; a camera that comes up at 5000M is warned about below.
 #
-# THE DEFAULT IS THE USB 2.0 MODE, DELIBERATELY, FOR EVERY CAMERA.
-#
-# SuperSpeed is not reliable with these cameras on this board — see the USB note
-# in mast/README.md — so the safe mode is the policy even for a camera that
-# enumerated at 5000M and advertises better. Asking for 960x600@10 makes
-# nano_mjpeg.py pick the slowest rate on offer (10 at 480M, 15 at 5000M), which
-# is the most conservative thing the camera will do.
-#
-# Note what this does NOT do: nothing here can force the USB *link* speed. That
-# is decided by the cable and the socket, and kernel 4.9 on this Tegra exposes
-# no per-port SuperSpeed disable. A camera that comes up at 5000M is warned
-# about below; the fix is a USB 2.0 cable or a different socket.
-#
-# It is also the CPU budget. Encode is single-threaded and this board has four
-# A57s with one already spoken for: 960x600@10 measured ~22% of a core per
-# camera, so four cameras fit. @30 is ~70% each and would not.
+# It is also the CPU budget: 960x600@10 measured ~22% of a core per camera on
+# this board, so four cameras fit; @30 would not.
 NANO_RES=${NANO_RES:-960x600}
 NANO_FPS=${NANO_FPS:-10}
 NANO_QUALITY=${NANO_QUALITY:-80}   # JPEG quality; the camera gives no MJPEG to relay
 NANO_REMOTE=${NANO_REMOTE:-}       # where the server lands; empty = remote $HOME
 
 DRY=0
-MODE=up
+MODE=start
 
 usage() {
     cat <<EOF
-Serve the Nano's Arducam as MJPEG over HTTP, bypassing ROS. Idempotent.
+Serve the rover's Arducam(s) as MJPEG over HTTP, bypassing ROS. Idempotent.
 See the header of this file for why this camera is not a ROS topic.
 
-  ./mast/nano-camera.sh              # probe, deploy, start, verify
-  ./mast/nano-camera.sh --probe      # report formats/resolutions, change nothing
-  ./mast/nano-camera.sh --stop
-  ./mast/nano-camera.sh --dry
+  ./mast/start-cameras.sh            # probe, deploy, start, verify
+  ./mast/start-cameras.sh --probe    # report formats/resolutions, change nothing
+  ./mast/start-cameras.sh --stop
+  ./mast/start-cameras.sh --dry
 
 Options
-  --ssh U@H       Nano over the link      (default: $NANO_SSH)
+  --ssh U@H       rover's Jetson, over the link  (default: $NANO_SSH)
   --port N        HTTP port of the FIRST camera; the rest take N+1, N+2 …
                                           (default: $NANO_PORT)
   --dev LIST      comma-separated /dev/videoN to serve
@@ -115,8 +76,8 @@ Options
   --probe | --stop | --dry
   -h, --help
 
-Needs nothing installed: mast/nano_mjpeg.py runs on host python3 if it has
-OpenCV, else inside the rover_prod container, which does. No apt, no build.
+Needs nothing installed: mast/camera_mjpeg_server.py runs on host python3 if it
+has OpenCV, else inside the rover_prod container, which does. No apt, no build.
 
 Environment: every default above as an env var of the same name. Flags win.
 EOF
@@ -140,7 +101,7 @@ while [ $# -gt 0 ]; do
 done
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SERVER_SRC="$REPO/mast/nano_mjpeg.py"
+SERVER_SRC="$REPO/mast/camera_mjpeg_server.py"
 
 say()   { printf '  %s\n' "$*"; }
 head_() { printf '\n\033[1m%s\033[0m\n' "$1"; }
@@ -163,24 +124,22 @@ nexec() {
 
 # ================================================================== reach ==
 
-head_ "Nano at $NANO_SSH"
+head_ "Jetson at $NANO_SSH"
 if [ "$DRY" = 1 ]; then
     say "dry run — nothing will be touched"
 elif ! $SSH "$NANO_SSH" true 2>/dev/null; then
     die "cannot ssh to $NANO_SSH (ssh-copy-id $NANO_SSH, or set --ssh)"
 else
     ok "$( $SSH "$NANO_SSH" '. /etc/os-release; echo "$PRETTY_NAME $(uname -r)"' 2>/dev/null )"
-    # Derive from the remote home rather than hard-coding a user: this box logs
-    # in as `jetson`, the rover as `indomitus-rover`.
-    [ -n "$NANO_REMOTE" ] || NANO_REMOTE=$($SSH "$NANO_SSH" 'echo $HOME' 2>/dev/null)/nano_mjpeg.py
+    [ -n "$NANO_REMOTE" ] || NANO_REMOTE=$($SSH "$NANO_SSH" 'echo $HOME' 2>/dev/null)/camera_mjpeg_server.py
 fi
-[ -n "$NANO_REMOTE" ] || NANO_REMOTE='$HOME/nano_mjpeg.py'   # --dry, no remote to ask
+[ -n "$NANO_REMOTE" ] || NANO_REMOTE='$HOME/camera_mjpeg_server.py'   # --dry, no remote to ask
 
 # ================================================================== stop ==
 
 if [ "$MODE" = stop ]; then
-    nexec "pkill -f '[n]ano_mjpeg\.py' 2>/dev/null; \
-           docker exec $CAM_CONTAINER pkill -f '[n]ano_mjpeg\.py' 2>/dev/null; \
+    nexec "pkill -f '[c]amera_mjpeg_server\.py' 2>/dev/null; \
+           docker exec $CAM_CONTAINER pkill -f '[c]amera_mjpeg_server\.py' 2>/dev/null; \
            sleep 1; true"
     ok "stream stopped (host and $CAM_CONTAINER)"
     exit 0
@@ -192,17 +151,9 @@ fi
 # arducams and will carry more. No udev rules on this box, so node numbers are
 # whatever uvcvideo assigned and are NOT stable across replugs — hence
 # rediscovery on every run rather than a remembered /dev/videoN.
-#
-# The sysfs walk (video4linux/<n>/device/..) is what ties a node to its USB
-# device, which is the only way to see the link speed and hub depth that decide
-# whether the camera will actually work here.
 
-# Stop every server before discovery, not just before starting. Two reasons:
-# the previous run's device/port assignment is not necessarily this run's
-# (node numbers move across replugs), and the streaming test below would
-# otherwise find the device busy with our own server and skip a good camera.
 head_ "Cameras"
-nexec "pkill -f '[n]ano_mjpeg\.py' 2>/dev/null; sleep 1; true"
+nexec "pkill -f '[c]amera_mjpeg_server\.py' 2>/dev/null; sleep 1; true"
 if [ "$DRY" = 1 ]; then
     CAMS="/dev/videoDRY|2-1.1|5000|(dry run)"
 else
@@ -216,25 +167,9 @@ else
                 echo "SKIP|$info|not a capture node"
                 continue
             fi
-            # Enumerating is not the same as working. A camera that trained at
-            # SuperSpeed and then wedged leaves a STALE node behind: the kernel
-            # never tears it down because the device went dark without a clean
-            # disconnect, so it still answers descriptors from cache while
-            # VIDIOC_STREAMON returns EIO. The same physical camera then
-            # re-appears on the USB 2.0 wires as a second node. Serving the
-            # ghost wastes a port and — worse — shifts the port of every
-            # camera after it, which silently breaks the UI tile mapping.
-            # So demand one real frame before believing in a camera.
-            #
-            # Keep the reason. A node that enumerates and then refuses to stream
-            # is the most confusing failure this script has: lsusb and
-            # ls /dev/video* both look healthy, so a bare "no cameras" reads as
-            # a bug in the script rather than as a wedged camera.
-            # (No apostrophes in here: this whole block is a single-quoted
-            # string handed to ssh, and one would end it.)
-            # 2>&1 with no redirect of stdout: v4l2-ctl reports a failed ioctl
-            # on STDOUT, not stderr, so discarding stdout loses the one line
-            # worth reading.
+            # A node can enumerate and still refuse to stream (a camera that
+            # trained at SuperSpeed and then wedged leaves a stale node
+            # behind). Demand one real frame before believing in a camera.
             err=$(timeout 8 v4l2-ctl -d "$d" --stream-mmap --stream-count=1 2>&1)
             rc=$?
             if [ $rc -ne 0 ]; then
@@ -253,7 +188,7 @@ else
 
     if [ -z "$CAMS" ]; then
         if [ -z "$REJECTED" ]; then
-            die "no /dev/video* on the Nano at all — is the camera plugged in? (check lsusb)"
+            die "no /dev/video* on the Jetson at all — is the camera plugged in? (check lsusb)"
         fi
         warn "video nodes exist, but none of them produced a frame:"
         printf '%s\n' "$REJECTED" | while IFS='|' read -r DEV UPATH SPEED CARD WHY; do
@@ -262,8 +197,6 @@ else
             say "    USB $UPATH at ${SPEED}M — $WHY"
         done
         # A rejected node at 5000M is not a mystery, it is the known-bad case.
-        # Say so here rather than leaving the operator to find the USB note in
-        # mast/README.md.
         if printf '%s\n' "$REJECTED" | awk -F'|' '$3 == 5000 { hit = 1 } END { exit !hit }'; then
             say ""
             say "At least one node is at 5000M, which is the known-bad case on this"
@@ -280,7 +213,7 @@ else
             say "       ssh $NANO_SSH sudo cp /tmp/99-arducam-no-superspeed.rules /etc/udev/rules.d/"
             say "       ssh $NANO_SSH sudo udevadm control --reload"
         fi
-        die "no camera on the Nano produced a frame"
+        die "no camera on the Jetson produced a frame"
     fi
 
     # --dev restricts the set, so one camera can be restarted without disturbing
@@ -289,7 +222,7 @@ else
         CAMS=$(printf '%s\n' "$CAMS" | awk -v want="$NANO_DEV" -F'|' '
             BEGIN { n = split(want, a, ","); for (i = 1; i <= n; i++) keep[a[i]] = 1 }
             $1 in keep')
-        [ -n "$CAMS" ] || die "none of --dev '$NANO_DEV' is a capture-capable node on the Nano"
+        [ -n "$CAMS" ] || die "none of --dev '$NANO_DEV' is a capture-capable node on the Jetson"
     fi
 fi
 
@@ -301,15 +234,11 @@ while IFS='|' read -r DEV UPATH SPEED CARD; do
     say "  $CARD"
     say "  USB $UPATH at ${SPEED}M (5000 = USB 3.0, 480 = USB 2.0)"
 
-    # Hub depth is what actually breaks SuperSpeed here. Cascaded hubs are fine
-    # at 480M and fail at 5000M with EPROTO (-71) on the isochronous video
-    # endpoint, which reaches the operator as flat green frames with the
-    # occasional real one — an unfilled YUYV buffer decodes to green.
-    #
-    # Each dot in the path is one hub, but the FIRST is free: this Jetson Nano
-    # devkit's four USB3-A sockets hang off a VIA Labs hub soldered to the board
-    # (2109:0817), so a camera plugged straight into the Nano still reads N-M.X.
-    # Only dots beyond that are external hubs — hence the -1.
+    # Hub depth is what actually breaks SuperSpeed here: cascaded hubs are fine
+    # at 480M and fail at 5000M with EPROTO (-71), which shows up as flat green
+    # frames. This board's four USB3-A sockets hang off a hub soldered to the
+    # board, so a camera plugged straight in still reads one dot in the path —
+    # hence the -1 below to count only EXTERNAL hubs.
     HUBS=$(printf '%s' "$UPATH" | tr -cd '.' | wc -c)
     EXTRA=$(( HUBS > 0 ? HUBS - 1 : 0 ))
     if [ "$SPEED" = "5000" ]; then
@@ -319,7 +248,7 @@ while IFS='|' read -r DEV UPATH SPEED CARD; do
             say "  flat green frames and floods dmesg with"
             say "  'Non-zero status (-71) in video completion handler'."
         else
-            say "  Hub-free, but that is not enough: a camera direct on the Nano at"
+            say "  Hub-free, but that is not enough: a camera direct on the board at"
             say "  5000M still logged 824 -71 errors in one boot, serving ~19 fps"
             say "  against 30 with visible drops."
         fi
@@ -331,12 +260,10 @@ while IFS='|' read -r DEV UPATH SPEED CARD; do
     if [ "$DRY" != 1 ]; then
         $SSH "$NANO_SSH" "v4l2-ctl -d $DEV --list-formats-ext 2>/dev/null" 2>/dev/null \
             | grep -E 'Pixel Format|Size: Discrete|fps' | sed 's/^/    /'
-        # No MJPEG means the Nano encodes. Worth saying out loud per camera,
-        # because it is the whole CPU budget and it differs by USB speed.
         if $SSH "$NANO_SSH" "v4l2-ctl -d $DEV --list-formats 2>/dev/null" 2>/dev/null | grep -qi MJPG; then
             ok "  offers MJPEG — frames relayed, not re-encoded"
         else
-            say "  no MJPEG — the Nano encodes this one"
+            say "  no MJPEG — the Jetson encodes this one"
         fi
     fi
     PORT=$((PORT + 1))
@@ -348,12 +275,8 @@ EOF
 
 # ================================================================= deploy ==
 #
-# One file, copied to the Nano. Nothing is installed: nano_mjpeg.py runs on the
-# OpenCV and numpy that ship with JetPack, which is why this needs no sudo.
-#
-# mjpg-streamer was the obvious candidate and was tried first. It builds here
-# but segfaults inside input_uvc before it opens the device; its advantage would
-# have been relaying MJPEG untouched, which this camera does not offer anyway.
+# One file, copied to the rover's Jetson. Nothing is installed:
+# camera_mjpeg_server.py runs on the OpenCV and numpy that ship with JetPack.
 
 head_ "Server"
 # Where python3 has cv2. Host first; the container is the fallback, not the
@@ -364,7 +287,7 @@ if [ "$DRY" != 1 ]; then
     if $SSH "$NANO_SSH" 'python3 -c "import cv2, numpy"' 2>/dev/null; then
         ok "host python3 has cv2 + numpy, nothing to install"
         scp -q -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
-            "$SERVER_SRC" "$NANO_SSH:$NANO_REMOTE" || die "scp of nano_mjpeg.py failed"
+            "$SERVER_SRC" "$NANO_SSH:$NANO_REMOTE" || die "scp of camera_mjpeg_server.py failed"
         did "deployed $NANO_REMOTE"
     elif $SSH "$NANO_SSH" "docker exec $CAM_CONTAINER python3 -c 'import cv2, numpy'" 2>/dev/null; then
         CAM_RUNTIME=container
@@ -372,9 +295,9 @@ if [ "$DRY" != 1 ]; then
         warn "host python3 has no cv2 - falling back to the $CAM_CONTAINER container"
         say  "  (JetPack 6 ships no cv2 binding and the rover has no route to an apt archive)"
         scp -q -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
-            "$SERVER_SRC" "$NANO_SSH:$NANO_REMOTE" || die "scp of nano_mjpeg.py failed"
+            "$SERVER_SRC" "$NANO_SSH:$NANO_REMOTE" || die "scp of camera_mjpeg_server.py failed"
         $SSH "$NANO_SSH" "docker cp $NANO_REMOTE $CAM_CONTAINER:$CAM_CREMOTE" >/dev/null 2>&1 \
-            || die "docker cp of nano_mjpeg.py into $CAM_CONTAINER failed"
+            || die "docker cp of camera_mjpeg_server.py into $CAM_CONTAINER failed"
         did "deployed $CAM_CONTAINER:$CAM_CREMOTE (via $NANO_REMOTE)"
     else
         die "no python3 with cv2+numpy on the host or in $CAM_CONTAINER"
@@ -385,11 +308,9 @@ fi
 
 # ================================================================== start ==
 #
-# One server process per camera, each on its own port. Separate processes rather
-# than one multi-camera server: a camera that wedges — which these do, see the
-# hub note above — then takes down only its own feed, and can be restarted with
-# --dev without interrupting the other's stream. It also puts each encode on its
-# own core, which is the point on a 4-core board.
+# One server process per camera, each on its own port: a wedged camera then
+# takes down only its own feed, and can be restarted with --dev without
+# interrupting the other's stream, and each encode gets its own core.
 
 head_ "Streams"
 
@@ -397,7 +318,7 @@ PORT=$NANO_PORT
 STARTED=""
 while IFS='|' read -r DEV UPATH SPEED CARD; do
     [ -n "$DEV" ] || continue
-    LOG=/tmp/nano_mjpeg_$(basename "$DEV").log
+    LOG=/tmp/camera_mjpeg_$(basename "$DEV").log
     # Container mode uses `docker exec -d`, which is already detached and
     # cannot redirect to a host path, so the nohup/redirect wrapper is
     # host-only. Container logs come from `docker logs`/the exec's own stdout.
@@ -431,8 +352,8 @@ sleep 4
 
 # ================================================================= verify ==
 #
-# From the GS, not the Nano: a stream that only works on loopback is the failure
-# this catches. Headers only — an MJPEG body never ends.
+# From the GS, not the Jetson: a stream that only works on loopback is the
+# failure this catches. Headers only — an MJPEG body never ends.
 
 head_ "Verify from the GS"
 FAILED=0
@@ -442,10 +363,9 @@ printf '%s' "$STARTED" | while IFS='|' read -r DEV PORT LOG; do
     URL="http://$NANO_HOST:$PORT/?action=stream"
     CT=$(curl -s -m 8 -o /dev/null -D - "$URL" 2>/dev/null | grep -i '^content-type:' | tr -d '\r')
     HEALTH=$(curl -s -m 5 "http://$NANO_HOST:$PORT/health" 2>/dev/null)
-    # Content-Type alone is NOT enough. The HTTP server comes up whether or not
-    # the camera ever opened, so a wedged camera answers with a perfectly good
-    # multipart header and zero frames — which reported as "ok" until this
-    # checked the frame count. A feed serving nothing must never read as healthy.
+    # Content-Type alone is NOT enough: the HTTP server comes up whether or not
+    # the camera ever opened, so a wedged camera answers with a good header and
+    # zero frames. A feed serving nothing must never read as healthy.
     FRAMES=$(printf '%s' "$HEALTH" | sed -n 's/.*frames=\([0-9]*\).*/\1/p')
     if printf '%s' "$CT" | grep -qi 'multipart/x-mixed-replace' && [ "${FRAMES:-0}" -gt 0 ]; then
         ok "$DEV  $HEALTH"
@@ -456,7 +376,7 @@ printf '%s' "$STARTED" | while IFS='|' read -r DEV PORT LOG; do
         $SSH "$NANO_SSH" "tail -4 $LOG 2>/dev/null" 2>/dev/null | sed 's/^/       /'
     else
         warn "$DEV on port $PORT is not serving MJPEG at all"
-        say  "     on the Nano: tail $LOG"
+        say  "     on the Jetson: tail $LOG"
         $SSH "$NANO_SSH" "tail -6 $LOG 2>/dev/null" 2>/dev/null | sed 's/^/       /'
     fi
 done
