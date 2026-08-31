@@ -82,12 +82,13 @@ def pick_mode(modes, want_w, want_h, want_fps):
 class Camera:
     """Grabs frames in the background, holding only the newest JPEG."""
 
-    def __init__(self, device, width, height, fps, quality, name=None):
+    def __init__(self, device, width, height, fps, quality, fourcc='YUYV', name=None):
         self.device = device
         self.width = width
         self.height = height
         self.fps = fps
         self.quality = int(quality)
+        self.fourcc = fourcc
         self.name = name or device
 
         self._jpeg = None
@@ -111,7 +112,9 @@ class Camera:
         cap = cv2.VideoCapture(self.device, cv2.CAP_V4L2)
         if not cap.isOpened():
             raise RuntimeError('cannot open %s' % self.device)
-        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'YUYV'))
+        if len(self.fourcc) != 4:
+            raise RuntimeError('--format must be a 4-character FourCC, got %r' % self.fourcc)
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*self.fourcc))
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
         cap.set(cv2.CAP_PROP_FPS, self.fps)
@@ -120,8 +123,8 @@ class Camera:
                int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
                cap.get(cv2.CAP_PROP_FPS))
         self.mode = '%dx%d@%.0f' % got
-        print('%s: camera open: %dx%d @ %.0f fps, jpeg q%d'
-              % (self.name, got[0], got[1], got[2], self.quality), flush=True)
+        print('%s: camera open: %dx%d @ %.0f fps, %s, jpeg q%d'
+              % (self.name, got[0], got[1], got[2], self.fourcc, self.quality), flush=True)
         return cap
 
     def run(self):
@@ -244,13 +247,16 @@ def main():
     ap.add_argument('--height', type=int, default=600)
     ap.add_argument('--fps', type=int, default=10)
     ap.add_argument('--quality', type=int, default=80, help='JPEG quality 1-100')
+    ap.add_argument('--format', default='YUYV',
+                     help='capture pixel format (FourCC), e.g. YUYV, MJPG, GREY')
     ap.add_argument('--port', type=int, default=8090)
     ap.add_argument('--bind', default='0.0.0.0')
     ap.add_argument('--name', default=None,
                      help='camera name, for logs and /health (default: --device)')
     args = ap.parse_args()
 
-    cam = Camera(args.device, args.width, args.height, args.fps, args.quality, args.name)
+    cam = Camera(args.device, args.width, args.height, args.fps, args.quality,
+                 fourcc=args.format, name=args.name)
     threading.Thread(target=cam.run, daemon=True).start()
 
     Handler.camera = cam

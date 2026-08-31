@@ -59,6 +59,10 @@ CAM_CREMOTE=${CAM_CREMOTE:-/tmp/camera_mjpeg_server.py}
 DEFAULT_RES=${DEFAULT_RES:-960x600}
 DEFAULT_FPS=${DEFAULT_FPS:-10}
 DEFAULT_QUALITY=${DEFAULT_QUALITY:-80}   # JPEG quality; the camera gives no MJPEG to relay
+# Capture pixel format (FourCC), e.g. YUYV, MJPG, GREY, UYVY. YUYV is the
+# Arducam's only option; a different camera model (thermal, spectral, stereo)
+# may need a different one — set per camera in --config.
+DEFAULT_FORMAT=${DEFAULT_FORMAT:-YUYV}
 SERVER_REMOTE_PATH=${SERVER_REMOTE_PATH:-}       # where the server lands; empty = remote $HOME
 
 DRY=0
@@ -90,6 +94,9 @@ Options
                   every camera; see the notes at the top of this file. Per-
                   camera overrides can also be set in --config.
   --quality N     JPEG quality 1-100      (default: $DEFAULT_QUALITY)
+  --format FMT    capture pixel format (FourCC), e.g. YUYV, MJPG, GREY
+                                          (default: $DEFAULT_FORMAT)
+                  Per-camera overrides can also be set in --config.
   --probe | --stop | --dry
   -h, --help
 
@@ -110,6 +117,7 @@ while [ $# -gt 0 ]; do
         --res)     DEFAULT_RES=$2; shift 2 ;;
         --fps)     DEFAULT_FPS=$2; shift 2 ;;
         --quality) DEFAULT_QUALITY=$2; shift 2 ;;
+        --format)  DEFAULT_FORMAT=$2; shift 2 ;;
         --probe)   MODE=probe; shift ;;
         --stop)    MODE=stop; shift ;;
         --dry)     DRY=1; shift ;;
@@ -206,18 +214,20 @@ for name, cfg in cams.items():
     if not device:
         print('ERROR|%s: camera "%s" has no device' % (path, name))
         sys.exit(0)
-    print('OK|%s|%s|%s|%s|%s' % (
-        name, device, cfg.get('res', ''), cfg.get('fps', ''), cfg.get('quality', '')))
+    print('OK|%s|%s|%s|%s|%s|%s' % (
+        name, device, cfg.get('res', ''), cfg.get('fps', ''), cfg.get('quality', ''),
+        cfg.get('format', '')))
 PY
 ) || die "cannot parse $CONFIG — is PyYAML installed? (pip install pyyaml)"
 
-    while IFS='|' read -r STATUS NAME DEV RES FPS QUALITY; do
+    while IFS='|' read -r STATUS NAME DEV RES FPS QUALITY FORMAT; do
         [ -n "$STATUS" ] || continue
         [ "$STATUS" = ERROR ] && die "$NAME"
         [ -n "$RES" ] && [ "$RES" != "-" ] || RES=$DEFAULT_RES
         [ -n "$FPS" ] && [ "$FPS" != "-" ] || FPS=$DEFAULT_FPS
         [ -n "$QUALITY" ] && [ "$QUALITY" != "-" ] || QUALITY=$DEFAULT_QUALITY
-        CONF_CAMS="$CONF_CAMS$NAME|$DEV|$RES|$FPS|$QUALITY
+        [ -n "$FORMAT" ] && [ "$FORMAT" != "-" ] || FORMAT=$DEFAULT_FORMAT
+        CONF_CAMS="$CONF_CAMS$NAME|$DEV|$RES|$FPS|$QUALITY|$FORMAT
 "
     done <<EOF
 $PARSED
@@ -260,14 +270,14 @@ probe_camera() {
 }
 
 if [ "$DRY" = 1 ]; then
-    CAMS="dry-cam|/dev/videoDRY|2-1.1|5000|(dry run)|$DEFAULT_RES|$DEFAULT_FPS|$DEFAULT_QUALITY"
+    CAMS="dry-cam|/dev/videoDRY|2-1.1|5000|(dry run)|$DEFAULT_RES|$DEFAULT_FPS|$DEFAULT_QUALITY|$DEFAULT_FORMAT"
 elif [ -n "$CONF_CAMS" ]; then
     CAMS="" REJECTED=""
-    while IFS='|' read -r NAME DEV RES FPS QUALITY; do
+    while IFS='|' read -r NAME DEV RES FPS QUALITY FORMAT; do
         [ -n "$NAME" ] || continue
         RESULT=$(probe_camera "$NAME" "$DEV")
         case "$RESULT" in
-            OK\|*)   CAMS="$CAMS${RESULT#OK|}|$RES|$FPS|$QUALITY
+            OK\|*)   CAMS="$CAMS${RESULT#OK|}|$RES|$FPS|$QUALITY|$FORMAT
 " ;;
             SKIP\|*) REJECTED="$REJECTED${RESULT#SKIP|}
 " ;;
@@ -300,9 +310,10 @@ else
     REJECTED=$(printf '%s\n' "$CAMS" | sed -n 's/^SKIP|//p')
     CAMS=$(printf '%s\n' "$CAMS" | sed -n 's/^OK|//p')
     # No --config: name each camera after its device basename (e.g. "video0"),
-    # and give every one the same global res/fps/quality.
-    CAMS=$(printf '%s\n' "$CAMS" | awk -F'|' -v res="$DEFAULT_RES" -v fps="$DEFAULT_FPS" -v q="$DEFAULT_QUALITY" \
-        'BEGIN{OFS="|"} NF{n=$1; sub(/^.*\//,"",n); print n,$1,$2,$3,$4,res,fps,q}')
+    # and give every one the same global res/fps/quality/format.
+    CAMS=$(printf '%s\n' "$CAMS" | awk -F'|' -v res="$DEFAULT_RES" -v fps="$DEFAULT_FPS" \
+        -v q="$DEFAULT_QUALITY" -v fmt="$DEFAULT_FORMAT" \
+        'BEGIN{OFS="|"} NF{n=$1; sub(/^.*\//,"",n); print n,$1,$2,$3,$4,res,fps,q,fmt}')
     REJECTED=$(printf '%s\n' "$REJECTED" | awk -F'|' \
         'BEGIN{OFS="|"} NF{n=$1; sub(/^.*\//,"",n); print n,$1,$2,$3,$4,$5}')
 fi
@@ -357,13 +368,13 @@ if [ "$DRY" != 1 ]; then
 fi
 
 PORT=$FIRST_PORT
-while IFS='|' read -r NAME DEV UPATH SPEED CARD RES FPS QUALITY; do
+while IFS='|' read -r NAME DEV UPATH SPEED CARD RES FPS QUALITY FORMAT; do
     [ -n "$DEV" ] || continue
     say ""
     say "$NAME  ($DEV)  ->  port $PORT"
     say "  $CARD"
     say "  USB $UPATH at ${SPEED}M (5000 = USB 3.0, 480 = USB 2.0)"
-    say "  capture $RES @ ${FPS}fps, quality $QUALITY"
+    say "  capture $RES @ ${FPS}fps, $FORMAT, quality $QUALITY"
 
     # Hub depth is what actually breaks SuperSpeed here: cascaded hubs are fine
     # at 480M and fail at 5000M with EPROTO (-71), which shows up as flat green
@@ -447,7 +458,7 @@ head_ "Streams"
 
 PORT=$FIRST_PORT
 STARTED=""
-while IFS='|' read -r NAME DEV UPATH SPEED CARD RES FPS QUALITY; do
+while IFS='|' read -r NAME DEV UPATH SPEED CARD RES FPS QUALITY FORMAT; do
     [ -n "$DEV" ] || continue
     LOG=/tmp/camera_mjpeg_$NAME.log
     # Container mode uses `docker exec -d`, which is already detached and
@@ -456,11 +467,11 @@ while IFS='|' read -r NAME DEV UPATH SPEED CARD RES FPS QUALITY; do
     if [ "${CAM_RUNTIME:-host}" = container ]; then
         nexec "$CAM_PY \
             --device $DEV --width ${RES%x*} --height ${RES#*x} \
-            --fps $FPS --quality $QUALITY --port $PORT --name $NAME"
+            --fps $FPS --quality $QUALITY --format $FORMAT --port $PORT --name $NAME"
     else
         nexec "nohup $CAM_PY \
             --device $DEV --width ${RES%x*} --height ${RES#*x} \
-            --fps $FPS --quality $QUALITY --port $PORT --name $NAME \
+            --fps $FPS --quality $QUALITY --format $FORMAT --port $PORT --name $NAME \
             >$LOG 2>&1 & true"
     fi
     STARTED="$STARTED$NAME|$DEV|$PORT|$LOG
