@@ -39,6 +39,8 @@
 #     quality: 80
 
 cameras:
+  zed2i-stereo-camera-front:
+    device: /dev/zed2i-stereo-camera
   arducam-mast:
     device: /dev/arducam-mast
   arducam-front:
@@ -51,24 +53,12 @@ cameras:
     res: 960x600
     fps: 10
     quality: 80
-  spectral-camera-front:
-    device: /dev/spectral-camera
-    res: 960x600
-    fps: 10
-    quality: 80
-  spectral-camera-front:
-    device: /dev/spectral-camera
-    res: 960x600
-    fps: 10
-    quality: 80
-  thermal-camera-front:
-    device: /dev/thermal-camera
-  thermal-camera-front:
-    device: /dev/thermal-camera
-    res: 960x600
-    fps: 10
-    quality: 80
   arm-camera:
     device: /dev/arm-camera
-  zed2i-stereo-camera-front:
-    device: /dev/zed2i-stereo-camera
+  spectral-camera-front:
+    device: /dev/spectral-camera
+    res: 960x600
+    fps: 10
+    quality: 80
+  thermal-camera-front:
+    device: /dev/thermal-camera
