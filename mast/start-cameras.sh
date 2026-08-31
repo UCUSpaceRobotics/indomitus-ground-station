@@ -29,11 +29,11 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # ================================================================ defaults ==
 
-NANO_SSH=${NANO_SSH:-indomitus-rover@10.42.0.1}
+JETSON_SSH=${JETSON_SSH:-indomitus-rover@10.42.0.1}
 # First camera's port; each further camera takes the next one up. NOT 8080:
 # web_video_server owns that on the GS.
-NANO_PORT=${NANO_PORT:-8090}
-NANO_DEV=${NANO_DEV:-}             # empty = serve every configured/found camera
+FIRST_PORT=${FIRST_PORT:-8090}
+DEV_FILTER=${DEV_FILTER:-}             # empty = serve every configured/found camera
 # Concrete camera list: name -> udev symlink (+ optional per-camera res/fps/
 # quality). See mast/cameras.yaml for the format. If its `cameras:` map is
 # empty or missing, every /dev/video* node is auto-discovered instead (the
@@ -56,10 +56,10 @@ CAM_CREMOTE=${CAM_CREMOTE:-/tmp/camera_mjpeg_server.py}
 #
 # It is also the CPU budget: 960x600@10 measured ~22% of a core per camera on
 # this board, so four cameras fit; @30 would not.
-NANO_RES=${NANO_RES:-960x600}
-NANO_FPS=${NANO_FPS:-10}
-NANO_QUALITY=${NANO_QUALITY:-80}   # JPEG quality; the camera gives no MJPEG to relay
-NANO_REMOTE=${NANO_REMOTE:-}       # where the server lands; empty = remote $HOME
+DEFAULT_RES=${DEFAULT_RES:-960x600}
+DEFAULT_FPS=${DEFAULT_FPS:-10}
+DEFAULT_QUALITY=${DEFAULT_QUALITY:-80}   # JPEG quality; the camera gives no MJPEG to relay
+SERVER_REMOTE_PATH=${SERVER_REMOTE_PATH:-}       # where the server lands; empty = remote $HOME
 
 DRY=0
 MODE=start
@@ -75,21 +75,21 @@ See the header of this file for why this camera is not a ROS topic.
   ./mast/start-cameras.sh --dry
 
 Options
-  --ssh U@H       rover's Jetson, over the link  (default: $NANO_SSH)
+  --ssh U@H       rover's Jetson, over the link  (default: $JETSON_SSH)
   --port N        HTTP port of the FIRST camera; the rest take N+1, N+2 …
-                                          (default: $NANO_PORT)
+                                          (default: $FIRST_PORT)
   --config FILE   name -> udev symlink camera list (default: $CONFIG)
                   See mast/cameras.yaml for the format. Missing file or empty
                   \`cameras:\` falls back to auto-discovering every /dev/video*.
   --dev LIST      comma-separated camera names or devices to serve
-                  ('' = every configured/found camera) (default: ${NANO_DEV:-all})
-  --res WxH       capture resolution      (default: $NANO_RES)
-  --fps N         capture frame rate      (default: $NANO_FPS)
+                  ('' = every configured/found camera) (default: ${DEV_FILTER:-all})
+  --res WxH       capture resolution      (default: $DEFAULT_RES)
+  --fps N         capture frame rate      (default: $DEFAULT_FPS)
                   Snapped to the nearest rate the camera offers, never faster
                   than asked. The default is the USB 2.0 mode on purpose, for
                   every camera; see the notes at the top of this file. Per-
                   camera overrides can also be set in --config.
-  --quality N     JPEG quality 1-100      (default: $NANO_QUALITY)
+  --quality N     JPEG quality 1-100      (default: $DEFAULT_QUALITY)
   --probe | --stop | --dry
   -h, --help
 
@@ -103,13 +103,13 @@ EOF
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --ssh)     NANO_SSH=$2; shift 2 ;;
-        --port)    NANO_PORT=$2; shift 2 ;;
+        --ssh)     JETSON_SSH=$2; shift 2 ;;
+        --port)    FIRST_PORT=$2; shift 2 ;;
         --config)  CONFIG=$2; shift 2 ;;
-        --dev)     NANO_DEV=$2; shift 2 ;;
-        --res)     NANO_RES=$2; shift 2 ;;
-        --fps)     NANO_FPS=$2; shift 2 ;;
-        --quality) NANO_QUALITY=$2; shift 2 ;;
+        --dev)     DEV_FILTER=$2; shift 2 ;;
+        --res)     DEFAULT_RES=$2; shift 2 ;;
+        --fps)     DEFAULT_FPS=$2; shift 2 ;;
+        --quality) DEFAULT_QUALITY=$2; shift 2 ;;
         --probe)   MODE=probe; shift ;;
         --stop)    MODE=stop; shift ;;
         --dry)     DRY=1; shift ;;
@@ -132,25 +132,25 @@ die()   { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; exit 1; }
 # remaining lines, so only the FIRST camera is ever processed — silently, with
 # no error. Nothing here ever pipes input to ssh, so -n costs nothing.
 SSH="ssh -n -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8"
-NANO_HOST=${NANO_SSH#*@}
+JETSON_HOST=${JETSON_SSH#*@}
 
 nexec() {
     if [ "$DRY" = 1 ]; then printf '  \033[2mwould run\033[0m %s\n' "$1"; return 0; fi
-    $SSH "$NANO_SSH" "$1"
+    $SSH "$JETSON_SSH" "$1"
 }
 
 # ================================================================== reach ==
 
-head_ "Jetson at $NANO_SSH"
+head_ "Jetson at $JETSON_SSH"
 if [ "$DRY" = 1 ]; then
     say "dry run — nothing will be touched"
-elif ! $SSH "$NANO_SSH" true 2>/dev/null; then
-    die "cannot ssh to $NANO_SSH (ssh-copy-id $NANO_SSH, or set --ssh)"
+elif ! $SSH "$JETSON_SSH" true 2>/dev/null; then
+    die "cannot ssh to $JETSON_SSH (ssh-copy-id $JETSON_SSH, or set --ssh)"
 else
-    ok "$( $SSH "$NANO_SSH" '. /etc/os-release; echo "$PRETTY_NAME $(uname -r)"' 2>/dev/null )"
-    [ -n "$NANO_REMOTE" ] || NANO_REMOTE=$($SSH "$NANO_SSH" 'echo $HOME' 2>/dev/null)/camera_mjpeg_server.py
+    ok "$( $SSH "$JETSON_SSH" '. /etc/os-release; echo "$PRETTY_NAME $(uname -r)"' 2>/dev/null )"
+    [ -n "$SERVER_REMOTE_PATH" ] || SERVER_REMOTE_PATH=$($SSH "$JETSON_SSH" 'echo $HOME' 2>/dev/null)/camera_mjpeg_server.py
 fi
-[ -n "$NANO_REMOTE" ] || NANO_REMOTE='$HOME/camera_mjpeg_server.py'   # --dry, no remote to ask
+[ -n "$SERVER_REMOTE_PATH" ] || SERVER_REMOTE_PATH='$HOME/camera_mjpeg_server.py'   # --dry, no remote to ask
 
 # ================================================================== stop ==
 
@@ -214,9 +214,9 @@ PY
     while IFS='|' read -r STATUS NAME DEV RES FPS QUALITY; do
         [ -n "$STATUS" ] || continue
         [ "$STATUS" = ERROR ] && die "$NAME"
-        [ -n "$RES" ] && [ "$RES" != "-" ] || RES=$NANO_RES
-        [ -n "$FPS" ] && [ "$FPS" != "-" ] || FPS=$NANO_FPS
-        [ -n "$QUALITY" ] && [ "$QUALITY" != "-" ] || QUALITY=$NANO_QUALITY
+        [ -n "$RES" ] && [ "$RES" != "-" ] || RES=$DEFAULT_RES
+        [ -n "$FPS" ] && [ "$FPS" != "-" ] || FPS=$DEFAULT_FPS
+        [ -n "$QUALITY" ] && [ "$QUALITY" != "-" ] || QUALITY=$DEFAULT_QUALITY
         CONF_CAMS="$CONF_CAMS$NAME|$DEV|$RES|$FPS|$QUALITY
 "
     done <<EOF
@@ -230,7 +230,7 @@ fi
 # handful of ssh round trips, not the hundreds this project scales to.
 probe_camera() {
     NAME=$1 DEV=$2
-    $SSH "$NANO_SSH" "
+    $SSH "$JETSON_SSH" "
         d='$DEV'
         if [ ! -e \"\$d\" ]; then
             echo 'SKIP|$NAME|$DEV||||not present (symlink missing — replugged, or udev rule not installed?)'
@@ -260,7 +260,7 @@ probe_camera() {
 }
 
 if [ "$DRY" = 1 ]; then
-    CAMS="dry-cam|/dev/videoDRY|2-1.1|5000|(dry run)|$NANO_RES|$NANO_FPS|$NANO_QUALITY"
+    CAMS="dry-cam|/dev/videoDRY|2-1.1|5000|(dry run)|$DEFAULT_RES|$DEFAULT_FPS|$DEFAULT_QUALITY"
 elif [ -n "$CONF_CAMS" ]; then
     CAMS="" REJECTED=""
     while IFS='|' read -r NAME DEV RES FPS QUALITY; do
@@ -276,7 +276,7 @@ elif [ -n "$CONF_CAMS" ]; then
 $CONF_CAMS
 EOF
 else
-    CAMS=$($SSH "$NANO_SSH" '
+    CAMS=$($SSH "$JETSON_SSH" '
         for d in /dev/video*; do
             [ -e "$d" ] || continue
             n=$(basename "$d")
@@ -301,7 +301,7 @@ else
     CAMS=$(printf '%s\n' "$CAMS" | sed -n 's/^OK|//p')
     # No --config: name each camera after its device basename (e.g. "video0"),
     # and give every one the same global res/fps/quality.
-    CAMS=$(printf '%s\n' "$CAMS" | awk -F'|' -v res="$NANO_RES" -v fps="$NANO_FPS" -v q="$NANO_QUALITY" \
+    CAMS=$(printf '%s\n' "$CAMS" | awk -F'|' -v res="$DEFAULT_RES" -v fps="$DEFAULT_FPS" -v q="$DEFAULT_QUALITY" \
         'BEGIN{OFS="|"} NF{n=$1; sub(/^.*\//,"",n); print n,$1,$2,$3,$4,res,fps,q}')
     REJECTED=$(printf '%s\n' "$REJECTED" | awk -F'|' \
         'BEGIN{OFS="|"} NF{n=$1; sub(/^.*\//,"",n); print n,$1,$2,$3,$4,$5}')
@@ -333,30 +333,30 @@ if [ "$DRY" != 1 ]; then
             say "board. SuperSpeed here fails the UVC probe control with EPROTO:"
             say "  uvcvideo: Failed to set UVC probe control : -71"
             say "so the node never streams and looks exactly like an absent camera."
-            say "Confirm with:  ssh $NANO_SSH dmesg | grep -c -- -71"
+            say "Confirm with:  ssh $JETSON_SSH dmesg | grep -c -- -71"
             say ""
             say "Fixes, best first — software cannot force the link down to USB 2.0:"
             say "  1. re-cable: a USB 2.0 cable, or a socket with no external hub"
             say "  2. install the udev rule that deauthorises the SuperSpeed"
             say "     instance so the camera re-trains at 480M, then replug it:"
-            say "       scp mast/99-arducam-no-superspeed.rules $NANO_SSH:/tmp/"
-            say "       ssh $NANO_SSH sudo cp /tmp/99-arducam-no-superspeed.rules /etc/udev/rules.d/"
-            say "       ssh $NANO_SSH sudo udevadm control --reload"
+            say "       scp mast/99-arducam-no-superspeed.rules $JETSON_SSH:/tmp/"
+            say "       ssh $JETSON_SSH sudo cp /tmp/99-arducam-no-superspeed.rules /etc/udev/rules.d/"
+            say "       ssh $JETSON_SSH sudo udevadm control --reload"
         fi
         die "no camera on the Jetson produced a frame"
     fi
 
     # --dev restricts the set (by name or by device), so one camera can be
     # restarted without disturbing the others' streams.
-    if [ -n "$NANO_DEV" ]; then
-        CAMS=$(printf '%s\n' "$CAMS" | awk -v want="$NANO_DEV" -F'|' '
+    if [ -n "$DEV_FILTER" ]; then
+        CAMS=$(printf '%s\n' "$CAMS" | awk -v want="$DEV_FILTER" -F'|' '
             BEGIN { n = split(want, a, ","); for (i = 1; i <= n; i++) keep[a[i]] = 1 }
             ($1 in keep) || ($2 in keep)')
-        [ -n "$CAMS" ] || die "none of --dev '$NANO_DEV' matches a configured/found camera (by name or device)"
+        [ -n "$CAMS" ] || die "none of --dev '$DEV_FILTER' matches a configured/found camera (by name or device)"
     fi
 fi
 
-PORT=$NANO_PORT
+PORT=$FIRST_PORT
 while IFS='|' read -r NAME DEV UPATH SPEED CARD RES FPS QUALITY; do
     [ -n "$DEV" ] || continue
     say ""
@@ -389,9 +389,9 @@ while IFS='|' read -r NAME DEV UPATH SPEED CARD RES FPS QUALITY; do
     fi
 
     if [ "$DRY" != 1 ]; then
-        $SSH "$NANO_SSH" "v4l2-ctl -d $DEV --list-formats-ext 2>/dev/null" 2>/dev/null \
+        $SSH "$JETSON_SSH" "v4l2-ctl -d $DEV --list-formats-ext 2>/dev/null" 2>/dev/null \
             | grep -E 'Pixel Format|Size: Discrete|fps' | sed 's/^/    /'
-        if $SSH "$NANO_SSH" "v4l2-ctl -d $DEV --list-formats 2>/dev/null" 2>/dev/null | grep -qi MJPG; then
+        if $SSH "$JETSON_SSH" "v4l2-ctl -d $DEV --list-formats 2>/dev/null" 2>/dev/null | grep -qi MJPG; then
             ok "  offers MJPEG — frames relayed, not re-encoded"
         else
             say "  no MJPEG — the Jetson encodes this one"
@@ -413,28 +413,28 @@ head_ "Server"
 # Where python3 has cv2. Host first; the container is the fallback, not the
 # preference, because a container restart takes the streams with it.
 CAM_RUNTIME=host
-CAM_PY="python3 $NANO_REMOTE"
+CAM_PY="python3 $SERVER_REMOTE_PATH"
 if [ "$DRY" != 1 ]; then
-    if $SSH "$NANO_SSH" 'python3 -c "import cv2, numpy"' 2>/dev/null; then
+    if $SSH "$JETSON_SSH" 'python3 -c "import cv2, numpy"' 2>/dev/null; then
         ok "host python3 has cv2 + numpy, nothing to install"
         scp -q -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
-            "$SERVER_SRC" "$NANO_SSH:$NANO_REMOTE" || die "scp of camera_mjpeg_server.py failed"
-        did "deployed $NANO_REMOTE"
-    elif $SSH "$NANO_SSH" "docker exec $CAM_CONTAINER python3 -c 'import cv2, numpy'" 2>/dev/null; then
+            "$SERVER_SRC" "$JETSON_SSH:$SERVER_REMOTE_PATH" || die "scp of camera_mjpeg_server.py failed"
+        did "deployed $SERVER_REMOTE_PATH"
+    elif $SSH "$JETSON_SSH" "docker exec $CAM_CONTAINER python3 -c 'import cv2, numpy'" 2>/dev/null; then
         CAM_RUNTIME=container
         CAM_PY="docker exec -d $CAM_CONTAINER python3 $CAM_CREMOTE"
         warn "host python3 has no cv2 - falling back to the $CAM_CONTAINER container"
         say  "  (JetPack 6 ships no cv2 binding and the rover has no route to an apt archive)"
         scp -q -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
-            "$SERVER_SRC" "$NANO_SSH:$NANO_REMOTE" || die "scp of camera_mjpeg_server.py failed"
-        $SSH "$NANO_SSH" "docker cp $NANO_REMOTE $CAM_CONTAINER:$CAM_CREMOTE" >/dev/null 2>&1 \
+            "$SERVER_SRC" "$JETSON_SSH:$SERVER_REMOTE_PATH" || die "scp of camera_mjpeg_server.py failed"
+        $SSH "$JETSON_SSH" "docker cp $SERVER_REMOTE_PATH $CAM_CONTAINER:$CAM_CREMOTE" >/dev/null 2>&1 \
             || die "docker cp of camera_mjpeg_server.py into $CAM_CONTAINER failed"
-        did "deployed $CAM_CONTAINER:$CAM_CREMOTE (via $NANO_REMOTE)"
+        did "deployed $CAM_CONTAINER:$CAM_CREMOTE (via $SERVER_REMOTE_PATH)"
     else
         die "no python3 with cv2+numpy on the host or in $CAM_CONTAINER"
     fi
 else
-    say "would copy $SERVER_SRC -> $NANO_SSH:$NANO_REMOTE"
+    say "would copy $SERVER_SRC -> $JETSON_SSH:$SERVER_REMOTE_PATH"
 fi
 
 # ================================================================== start ==
@@ -445,7 +445,7 @@ fi
 
 head_ "Streams"
 
-PORT=$NANO_PORT
+PORT=$FIRST_PORT
 STARTED=""
 while IFS='|' read -r NAME DEV UPATH SPEED CARD RES FPS QUALITY; do
     [ -n "$DEV" ] || continue
@@ -472,7 +472,7 @@ EOF
 
 if [ "$DRY" = 1 ]; then
     printf '%s' "$STARTED" | while IFS='|' read -r NAME DEV PORT LOG; do
-        [ -n "$DEV" ] && say "would serve $NAME ($DEV) on http://$NANO_HOST:$PORT/$NAME?action=stream"
+        [ -n "$DEV" ] && say "would serve $NAME ($DEV) on http://$JETSON_HOST:$PORT/$NAME?action=stream"
     done
     exit 0
 fi
@@ -491,9 +491,9 @@ FAILED=0
 OK_URLS=""
 printf '%s' "$STARTED" | while IFS='|' read -r NAME DEV PORT LOG; do
     [ -n "$DEV" ] || continue
-    URL="http://$NANO_HOST:$PORT/$NAME?action=stream"
+    URL="http://$JETSON_HOST:$PORT/$NAME?action=stream"
     CT=$(curl -s -m 8 -o /dev/null -D - "$URL" 2>/dev/null | grep -i '^content-type:' | tr -d '\r')
-    HEALTH=$(curl -s -m 5 "http://$NANO_HOST:$PORT/health" 2>/dev/null)
+    HEALTH=$(curl -s -m 5 "http://$JETSON_HOST:$PORT/health" 2>/dev/null)
     # Content-Type alone is NOT enough: the HTTP server comes up whether or not
     # the camera ever opened, so a wedged camera answers with a good header and
     # zero frames. A feed serving nothing must never read as healthy.
@@ -504,17 +504,17 @@ printf '%s' "$STARTED" | while IFS='|' read -r NAME DEV PORT LOG; do
     elif printf '%s' "$CT" | grep -qi 'multipart/x-mixed-replace'; then
         warn "$NAME ($DEV) on port $PORT is serving NO FRAMES — $HEALTH"
         say  "     the server is up but the camera never opened; last log lines:"
-        $SSH "$NANO_SSH" "tail -4 $LOG 2>/dev/null" 2>/dev/null | sed 's/^/       /'
+        $SSH "$JETSON_SSH" "tail -4 $LOG 2>/dev/null" 2>/dev/null | sed 's/^/       /'
     else
         warn "$NAME ($DEV) on port $PORT is not serving MJPEG at all"
         say  "     on the Jetson: tail $LOG"
-        $SSH "$NANO_SSH" "tail -6 $LOG 2>/dev/null" 2>/dev/null | sed 's/^/       /'
+        $SSH "$JETSON_SSH" "tail -6 $LOG 2>/dev/null" 2>/dev/null | sed 's/^/       /'
     fi
 done
 
 printf '\n  \033[1mPoint UI tiles at:\033[0m\n'
 printf '%s' "$STARTED" | while IFS='|' read -r NAME DEV PORT LOG; do
-    [ -n "$DEV" ] && printf '    %-16s %s\n' "$NAME" "http://$NANO_HOST:$PORT/$NAME?action=stream"
+    [ -n "$DEV" ] && printf '    %-16s %s\n' "$NAME" "http://$JETSON_HOST:$PORT/$NAME?action=stream"
 done
 say ""
 say "Settings dialog -> Cameras -> paste one into each row's \"Image topic / URL\" box."
