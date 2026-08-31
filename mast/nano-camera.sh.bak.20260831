@@ -13,20 +13,10 @@
 # link, and web_video_server on the GS re-serves it as MJPEG for the UI tiles.
 # That needs ROS 2 Humble on the camera's machine.
 #
-# HISTORY, because the reason this exists has changed underneath it.
-# It was written for a Nano 4GB on JetPack 4.5.1 (Ubuntu 18.04, kernel
-# 4.9.201-tegra, L4T R32.5.2), where Humble had no 18.04 binaries and so there
-# was no v4l2_camera_node to run. As of 2026-08-31 the rover box is an **Orin
-# Nano Super on Ubuntu 22.04.5 / L4T R36.5.2**, where that constraint is gone —
-# a real ROS camera node IS possible again and is the better long-term answer.
-# This HTTP path is kept because it works today and needs nothing installed.
-#
-# What did NOT survive the swap: the host has no `cv2`. JetPack 6 does not ship
-# the python binding, the rover has no default route so `apt install` cannot
-# reach an archive, and numpy alone is not enough. The `rover_prod` container
-# does have cv2 4.5.4 + numpy, runs `network_mode: host` and privileged, and
-# sees /dev/video*, so the server runs THERE and still binds the host ports.
-# CAM_RUNTIME below picks host python3 when it can and the container otherwise.
+# This Jetson is a Nano 4GB on JetPack 4.5.1 — Ubuntu 18.04, kernel
+# 4.9.201-tegra, L4T R32.5.2. **Humble has no binaries for 18.04**, so there is
+# no v4l2_camera_node to run. That is the whole difference from the Orin NX,
+# where the arducams were ordinary ROS topics.
 #
 # The camera itself is unaffected: the Arducam B0495 is a driverless UVC device
 # the stock uvcvideo handles. So mast/nano_mjpeg.py captures it and serves MJPEG
@@ -52,9 +42,6 @@ NANO_SSH=${NANO_SSH:-indomitus-rover@10.42.0.1}
 # web_video_server owns that on the GS.
 NANO_PORT=${NANO_PORT:-8090}
 NANO_DEV=${NANO_DEV:-}             # empty = serve every capture-capable node
-# Fallback runtime when the host python3 has no cv2 (see the note in the header).
-CAM_CONTAINER=${CAM_CONTAINER:-rover_prod}
-CAM_CREMOTE=${CAM_CREMOTE:-/tmp/nano_mjpeg.py}
 # What the B0495 offers depends on the USB speed it enumerated at, and the two
 # lists share no frame rate at all:
 #
@@ -115,8 +102,8 @@ Options
   --probe | --stop | --dry
   -h, --help
 
-Needs nothing installed: mast/nano_mjpeg.py runs on host python3 if it has
-OpenCV, else inside the rover_prod container, which does. No apt, no build.
+Needs nothing installed on the Nano: mast/nano_mjpeg.py runs on the OpenCV and
+numpy that ship with JetPack. No apt, no build, no sudo.
 
 Environment: every default above as an env var of the same name. Flags win.
 EOF
@@ -179,10 +166,8 @@ fi
 # ================================================================== stop ==
 
 if [ "$MODE" = stop ]; then
-    nexec "pkill -f '[n]ano_mjpeg\.py' 2>/dev/null; \
-           docker exec $CAM_CONTAINER pkill -f '[n]ano_mjpeg\.py' 2>/dev/null; \
-           sleep 1; true"
-    ok "stream stopped (host and $CAM_CONTAINER)"
+    nexec "pkill -f '[n]ano_mjpeg\.py' 2>/dev/null; sleep 1; true"
+    ok "stream stopped"
     exit 0
 fi
 
@@ -356,29 +341,13 @@ EOF
 # have been relaying MJPEG untouched, which this camera does not offer anyway.
 
 head_ "Server"
-# Where python3 has cv2. Host first; the container is the fallback, not the
-# preference, because a container restart takes the streams with it.
-CAM_RUNTIME=host
-CAM_PY="python3 $NANO_REMOTE"
 if [ "$DRY" != 1 ]; then
-    if $SSH "$NANO_SSH" 'python3 -c "import cv2, numpy"' 2>/dev/null; then
-        ok "host python3 has cv2 + numpy, nothing to install"
-        scp -q -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
-            "$SERVER_SRC" "$NANO_SSH:$NANO_REMOTE" || die "scp of nano_mjpeg.py failed"
-        did "deployed $NANO_REMOTE"
-    elif $SSH "$NANO_SSH" "docker exec $CAM_CONTAINER python3 -c 'import cv2, numpy'" 2>/dev/null; then
-        CAM_RUNTIME=container
-        CAM_PY="docker exec -d $CAM_CONTAINER python3 $CAM_CREMOTE"
-        warn "host python3 has no cv2 - falling back to the $CAM_CONTAINER container"
-        say  "  (JetPack 6 ships no cv2 binding and the rover has no route to an apt archive)"
-        scp -q -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
-            "$SERVER_SRC" "$NANO_SSH:$NANO_REMOTE" || die "scp of nano_mjpeg.py failed"
-        $SSH "$NANO_SSH" "docker cp $NANO_REMOTE $CAM_CONTAINER:$CAM_CREMOTE" >/dev/null 2>&1 \
-            || die "docker cp of nano_mjpeg.py into $CAM_CONTAINER failed"
-        did "deployed $CAM_CONTAINER:$CAM_CREMOTE (via $NANO_REMOTE)"
-    else
-        die "no python3 with cv2+numpy on the host or in $CAM_CONTAINER"
-    fi
+    MISSING=$($SSH "$NANO_SSH" 'python3 -c "import cv2, numpy" 2>&1 >/dev/null || echo missing' 2>/dev/null)
+    [ -z "$MISSING" ] || die "python3 cv2/numpy not importable on the Nano — expected from JetPack: $MISSING"
+    ok "python3 + cv2 + numpy present, nothing to install"
+    scp -q -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+        "$SERVER_SRC" "$NANO_SSH:$NANO_REMOTE" || die "scp of nano_mjpeg.py failed"
+    did "deployed $NANO_REMOTE"
 else
     say "would copy $SERVER_SRC -> $NANO_SSH:$NANO_REMOTE"
 fi
@@ -398,19 +367,10 @@ STARTED=""
 while IFS='|' read -r DEV UPATH SPEED CARD; do
     [ -n "$DEV" ] || continue
     LOG=/tmp/nano_mjpeg_$(basename "$DEV").log
-    # Container mode uses `docker exec -d`, which is already detached and
-    # cannot redirect to a host path, so the nohup/redirect wrapper is
-    # host-only. Container logs come from `docker logs`/the exec's own stdout.
-    if [ "${CAM_RUNTIME:-host}" = container ]; then
-        nexec "$CAM_PY \
-            --device $DEV --width ${NANO_RES%x*} --height ${NANO_RES#*x} \
-            --fps $NANO_FPS --quality $NANO_QUALITY --port $PORT"
-    else
-        nexec "nohup $CAM_PY \
-            --device $DEV --width ${NANO_RES%x*} --height ${NANO_RES#*x} \
-            --fps $NANO_FPS --quality $NANO_QUALITY --port $PORT \
-            >$LOG 2>&1 & true"
-    fi
+    nexec "nohup python3 $NANO_REMOTE \
+        --device $DEV --width ${NANO_RES%x*} --height ${NANO_RES#*x} \
+        --fps $NANO_FPS --quality $NANO_QUALITY --port $PORT \
+        >$LOG 2>&1 & true"
     STARTED="$STARTED$DEV|$PORT|$LOG
 "
     PORT=$((PORT + 1))

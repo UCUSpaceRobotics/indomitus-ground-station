@@ -23,7 +23,7 @@ Pi      eth0          10.44.0.1/24
 Pi      wlx00c0…8237  10.42.0.2/24  +  10.43.0.2/24    client of whichever AP is up
 Bench   wlx00c0…eac8  10.43.0.1/24    SSID IndomitusBench, ch44 VHT40, hostapd
                                       route 10.44.0.0/24 via 10.43.0.2
-Rover   wlx00c0…86c1  10.42.0.1/24    SSID IndomitusRover — untouched
+Rover   wlx00c0…86c1  10.42.0.1/24    SSID ERC_UCUSpaceRobotics_A — untouched
 ```
 
 The bench laptop occupies exactly the rover's position in the chain, including

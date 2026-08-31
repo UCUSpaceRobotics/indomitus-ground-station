@@ -152,7 +152,7 @@ debugging anything else.
 
 | Setting | Value |
 |---|---|
-| SSID | `IndomitusRover` (must become `ERC_UCUSpaceRobotics_A`/`_B`) |
+| SSID | `ERC_UCUSpaceRobotics_A` (`_B` is the spare slot) |
 | Security | WPA2-PSK, CCMP |
 | Band / channel | 5 GHz, ch **36** (5180 MHz) |
 | Width | **40 MHz**, HT40+ (secondary ch40), centre 5190 |
@@ -386,7 +386,7 @@ python3 mast/watch_links.py --csv run1.csv
 
 | Setting | Value |
 |---|---|
-| `ROS_DOMAIN_ID` | **42**, both ends |
+| `ROS_DOMAIN_ID` | **90**, both ends |
 | RMW | `rmw_fastrtps_cpp` (Humble default) |
 | GS container | `indomitus_ground_station`, `network_mode: host`, `ipc: host` |
 | Rover container | `rover_prod`, `network_mode: host` |

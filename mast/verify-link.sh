@@ -16,7 +16,7 @@
 set -u
 
 PI=admin@10.44.0.1
-ROVER_USER=${ROVER_USER:-jetson}
+ROVER_USER=${ROVER_USER:-indomitus-rover}
 ROVER_WIFI=$ROVER_USER@10.42.0.1
 ROVER_LIFELINE=$ROVER_USER@10.45.0.51
 ROVER_PW=${ROVER_PW:-}
@@ -242,7 +242,7 @@ check_ap_guests() {
     # No hostapd config to read: hostapd is masked and the AP is an NM profile,
     # so the old ignore_broadcast_ssid / macaddr_acl / max_num_sta / ap_isolate
     # checks have nothing to read. Report what the NM profile does express.
-    check "SSID" "IndomitusRover" \
+    check "SSID" "ERC_UCUSpaceRobotics_A" \
         "$(rover 'nmcli -t -f 802-11-wireless.ssid connection show Hotspot | cut -d: -f2')"
     check "AP band" "a" \
         "$(rover 'nmcli -t -f 802-11-wireless.band connection show Hotspot | cut -d: -f2')"

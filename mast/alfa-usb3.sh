@@ -16,7 +16,7 @@
 # once the GS has actually reconnected. This mirrors rover-ap-apply.sh.
 #
 # WHAT COMES BACK ON ITS OWN. The AP here is NetworkManager, not hostapd: the
-# connection is `Hotspot` (mode=ap, ssid IndomitusRover, autoconnect=yes) and
+# connection is `Hotspot` (mode=ap, ssid ERC_UCUSpaceRobotics_A, autoconnect=yes) and
 # the 10.44.0.0/24 return route is a static route ON that connection, so both
 # return when NM re-activates it. That is why this reloads the module rather
 # than rebooting — the recovery path is shorter and observable.
@@ -28,7 +28,7 @@
 # failure and roll back.
 set -uo pipefail
 
-NANO_SSH=${NANO_SSH:-jetson@10.42.0.1}
+NANO_SSH=${NANO_SSH:-indomitus-rover@10.42.0.1}
 NANO_HOST=${NANO_HOST:-${NANO_SSH#*@}}
 # How long the Nano waits before reverting itself. Long enough for the adapter
 # to re-enumerate, NM to re-activate the AP and the GS to reconnect and run

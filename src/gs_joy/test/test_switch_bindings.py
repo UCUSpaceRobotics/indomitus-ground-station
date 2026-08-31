@@ -304,8 +304,10 @@ def test_no_function_offers_a_service_the_rover_does_not():
     """Every service either side of resolve() must be one that exists.
 
     Kept as an explicit list rather than a rule, because the only way to know
-    is to go and read what the rover advertises: rover_teleop/drive_power_node
-    for the drive_*, rover_peripherals/rover_lighting_node for the lights.
+    is to go and read what the server advertises: rover_teleop/drive_power_node
+    for the drive_*, rover_peripherals/rover_lighting_node for the lights, and
+    gs_comms/lora_gateway_node - on this side of the radio, not the rover's -
+    for the three under /gs/power.
     """
     advertised = {
         '/drive/power', '/drive/power/toggle',
@@ -316,6 +318,11 @@ def test_no_function_offers_a_service_the_rover_does_not():
         '/lights/red', '/lights/red/toggle',
         '/lights/green', '/lights/green/toggle',
         '/lights/blue', '/lights/blue/toggle',
+        # Served by the ground station itself, which is why they carry the
+        # /gs prefix the rover's own services do not.
+        '/gs/power/turn_on',
+        '/gs/power/turn_off',
+        '/gs/power/reboot_jetson',
     }
     for function in FUNCTIONS:
         for source in (SOURCE_SWITCHES, SOURCE_JOY):
