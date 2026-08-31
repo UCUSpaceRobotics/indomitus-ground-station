@@ -319,15 +319,12 @@ else
 fi
 
 if [ "$DRY" != 1 ]; then
-    if [ -z "$CAMS" ]; then
-        if [ -z "$REJECTED" ]; then
-            if [ -n "$CONF_CAMS" ]; then
-                die "none of the cameras in $CONFIG are present on the Jetson — check the symlinks and udev rules"
-            else
-                die "no /dev/video* on the Jetson at all — is the camera plugged in? (check lsusb)"
-            fi
-        fi
-        warn "camera(s) found, but none of them produced a frame:"
+    # Report every rejected camera, not just when ALL of them failed — a
+    # configured camera that silently drops out (present but not streaming)
+    # is exactly the kind of failure an operator needs called out, even when
+    # other cameras on the same run are fine.
+    if [ -n "$REJECTED" ]; then
+        warn "camera(s) configured/found, but not serving:"
         printf '%s\n' "$REJECTED" | while IFS='|' read -r NAME DEV UPATH SPEED CARD WHY; do
             [ -n "$NAME" ] || continue
             say "  $NAME  $DEV  ${CARD:-unknown}"
@@ -354,7 +351,14 @@ if [ "$DRY" != 1 ]; then
             say "       ssh $JETSON_SSH sudo cp /tmp/99-arducam-no-superspeed.rules /etc/udev/rules.d/"
             say "       ssh $JETSON_SSH sudo udevadm control --reload"
         fi
-        die "no camera on the Jetson produced a frame"
+    fi
+
+    if [ -z "$CAMS" ]; then
+        if [ -n "$CONF_CAMS" ]; then
+            die "none of the cameras in $CONFIG are present on the Jetson — check the symlinks and udev rules"
+        else
+            die "no /dev/video* on the Jetson at all — is the camera plugged in? (check lsusb)"
+        fi
     fi
 
     # --dev restricts the set (by name or by device), so one camera can be
@@ -400,8 +404,12 @@ while IFS='|' read -r NAME DEV UPATH SPEED CARD RES FPS QUALITY FORMAT; do
     fi
 
     if [ "$DRY" != 1 ]; then
+        # The pixel-format header line looks like "[0]: 'YUYV' (YUYV 4:2:2)",
+        # not "Pixel Format" — matching on that literal (as this used to)
+        # silently dropped every format line, leaving Size/Interval blocks
+        # with no way to tell which pixel format each one belongs to.
         $SSH "$JETSON_SSH" "v4l2-ctl -d $DEV --list-formats-ext 2>/dev/null" 2>/dev/null \
-            | grep -E 'Pixel Format|Size: Discrete|fps' | sed 's/^/    /'
+            | grep -E "^[[:space:]]*\[[0-9]+\]|Size: Discrete|Interval: Discrete" | sed 's/^/    /'
         if $SSH "$JETSON_SSH" "v4l2-ctl -d $DEV --list-formats 2>/dev/null" 2>/dev/null | grep -qi MJPG; then
             ok "  offers MJPEG — frames relayed, not re-encoded"
         else
