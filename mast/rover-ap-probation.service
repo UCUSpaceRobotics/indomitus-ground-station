@@ -1,0 +1,13 @@
+# Boot-survival rollback for the 40 MHz AP.
+#
+# The trial script's keep-flag lives in /run precisely so a reboot clears it.
+# Persistence needs the OPPOSITE: the confirmation must be on DISK, because the
+# thing being tested IS the reboot. Unless /etc/rover-ap-confirmed exists 5
+# minutes after boot, this tears persistence back out and restores the 20 MHz
+# NM Hotspot.
+[Unit]
+Description=Un-persist the rover AP unless the reboot was confirmed
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/rover-ap-probation

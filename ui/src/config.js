@@ -98,9 +98,14 @@ export function placeholderFor(camera) {
 /**
  * Topics the panels read. Overridable so the UI can follow a remapped rover.
  *
- * switches/joy/joyRaw live under the gs_bringup /gs namespace. armJoy,
- * cmdVel and servoTwist are deliberately absolute — they're where the gs
- * nodes hand off to the rover/arm side, so they stay outside /gs on both ends.
+ * switches/joy/joyRaw live under the gs_bringup /gs namespace.
+ *
+ * Everything the rover publishes sits under /rover — rover.launch.py wraps its
+ * whole group in PushRosNamespace(ROVER_NAMESPACE), default 'rover'. If that
+ * env var is ever changed on the rover, these have to follow it.
+ *
+ * armJoy and servoTwist stay absolute: the arm is explicitly excluded from the
+ * rover namespace, so it is still reached un-prefixed.
  */
 export const DEFAULT_TOPICS = {
   switches: '/gs/switches',
@@ -109,12 +114,12 @@ export const DEFAULT_TOPICS = {
   joyRaw: '/gs/joy/raw',
   /** The console dressed as an SDL gamepad, which is what the arm reads. */
   armJoy: '/arm/joy',
-  cmdVel: '/cmd_vel',
+  cmdVel: '/rover/cmd_vel',
   servoTwist: '/servo_node/delta_twist_cmds',
-  odom: '/odom',
-  battery: '/battery_state',
-  imu: '/imu/data',
-  gps: '/gps/fix',
+  odom: '/rover/odom',
+  battery: '/rover/battery_state',
+  imu: '/rover/imu/data',
+  gps: '/rover/gps/fix',
   rosout: '/rosout',
 };
 
@@ -147,7 +152,7 @@ function defaults() {
     armNode: '/gs/arm_gamepad',
     /** Node that turns console switches into rover service calls. */
     interpreterNode: '/gs/gs_interpreter',
-    /** Node that turns the sticks into /cmd_vel_gs, for the steering mode. */
+    /** Node that turns the sticks into /rover/cmd_vel_gs, for the steering mode. */
     driveNode: '/gs/joy_to_cmd_vel_node',
     /**
      * Console control -> rover function. The node is authoritative once these
@@ -292,6 +297,14 @@ const LEGACY_TOPICS = {
   switches: { '/switches': '/gs/switches' },
   joy: { '/joy': '/gs/joy' },
   joyRaw: { '/joy/raw': '/gs/joy/raw' },
+  // The same story one namespace over: rover.launch.py pushed every rover node
+  // and topic under /rover, so a console that saved its topics before that is
+  // still subscribing to names nothing publishes.
+  cmdVel: { '/cmd_vel': '/rover/cmd_vel' },
+  odom: { '/odom': '/rover/odom' },
+  battery: { '/battery_state': '/rover/battery_state' },
+  imu: { '/imu/data': '/rover/imu/data' },
+  gps: { '/gps/fix': '/rover/gps/fix' },
 };
 
 function migrateTopics(saved) {

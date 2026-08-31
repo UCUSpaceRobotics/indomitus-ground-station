@@ -134,7 +134,7 @@ def generate_launch_description():
                 # /cmd_vel is twist_mux's OUTPUT on the rover. External sources
                 # feed an input: cmd_vel_gs (priority 10), so the onboard
                 # gamepad on cmd_vel_joy (priority 100) always wins.
-                ('cmd_vel', '/cmd_vel_gs'),
+                ('cmd_vel', '/rover/cmd_vel_gs'),
             ],
             output='screen'
         ),
