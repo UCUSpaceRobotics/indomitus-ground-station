@@ -424,21 +424,31 @@ no binaries for 18.04**, so nothing in this section applies to it: no
 difference from the Orin NX, where the arducams were ordinary ROS topics.
 
 The cameras are **Arducam B0495 (USB3 2.3MP)**, driverless UVC, so `uvcvideo`
-handles them. `mast/start-cameras.sh` discovers every capture-capable
-`/dev/video*`, deploys `mast/camera_mjpeg_server.py`, and starts **one server process per
-camera** — first on **port 8090**, each further one on the next port up. Not
-8080: `web_video_server` owns that on the GS. A UI camera row takes each URL
-directly; see "Cameras outside ROS" in `ui/README.md`.
+handles them. `mast/start-cameras.sh` deploys `mast/camera_mjpeg_server.py` and
+starts **one server process per camera** — first on **port 8090**, each further
+one on the next port up. Not 8080: `web_video_server` owns that on the GS. A UI
+camera row takes each URL directly; see "Cameras outside ROS" in `ui/README.md`.
+
+Which cameras get served, and by what name, comes from `mast/cameras.yaml`: it
+maps each camera's deterministic udev symlink to a short name, which then
+appears in its stream URL (`http://<jetson>:<port>/<name>?action=stream`) and
+its log file, so a URL or log line identifies the physical camera without
+having to remember a port number. With no config (or one whose `cameras:` map
+is empty), the script falls back to discovering every `/dev/video*` node
+instead, named after its device (e.g. `video0`) — its original behaviour, from
+before this rover had per-camera udev rules.
 
 One process per camera on purpose: these cameras wedge (see the USB note below),
 and a process per feed means a wedged camera takes down only its own stream and
-can be restarted with `--dev /dev/videoN` without interrupting the others. It
-also puts each encode on its own core. Two cameras at 960x600@10 measured ~22%
-and ~21% of a core.
+can be restarted with `--dev <name>` (or a device path, in fallback mode)
+without interrupting the others. It also puts each encode on its own core. Two
+cameras at 960x600@10 measured ~22% and ~21% of a core.
 
 Node numbers are **not stable across replugs** — `/dev/video0` and `/dev/video1`
-swap around — so the script rediscovers them every run rather than remembering
-them, and reports each camera's USB path and link speed alongside its port.
+swap around — which is exactly what the udev symlinks in `cameras.yaml` are for;
+in fallback (no-config) mode the script rediscovers nodes fresh every run
+instead of remembering them, and reports each camera's USB path and link speed
+alongside its port either way.
 
 **USB speed decides what the camera offers**, and the two lists share no frame
 rate, which is a trap when re-cabling:

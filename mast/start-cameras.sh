@@ -17,7 +17,15 @@
 #
 # Point a camera tile at the URL this prints: open the UI settings dialog and
 # type it into the "Image topic / URL" box of any row.
+#
+# Which cameras get served, and by what name, comes from mast/cameras.yaml
+# (see that file) — it maps each camera's deterministic udev symlink to a
+# name, which then appears in its stream URL and log file. With no config
+# (or an empty one) every /dev/video* node is auto-discovered instead, named
+# after its device.
 set -uo pipefail
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # ================================================================ defaults ==
 
@@ -25,7 +33,12 @@ NANO_SSH=${NANO_SSH:-indomitus-rover@10.42.0.1}
 # First camera's port; each further camera takes the next one up. NOT 8080:
 # web_video_server owns that on the GS.
 NANO_PORT=${NANO_PORT:-8090}
-NANO_DEV=${NANO_DEV:-}             # empty = serve every capture-capable node
+NANO_DEV=${NANO_DEV:-}             # empty = serve every configured/found camera
+# Concrete camera list: name -> udev symlink (+ optional per-camera res/fps/
+# quality). See mast/cameras.yaml for the format. If its `cameras:` map is
+# empty or missing, every /dev/video* node is auto-discovered instead (the
+# old behaviour).
+CONFIG=${CONFIG:-$REPO/mast/cameras.yaml}
 # Fallback runtime when the host python3 has no cv2 (see the note by CAM_RUNTIME below).
 CAM_CONTAINER=${CAM_CONTAINER:-rover_prod}
 CAM_CREMOTE=${CAM_CREMOTE:-/tmp/camera_mjpeg_server.py}
@@ -65,13 +78,17 @@ Options
   --ssh U@H       rover's Jetson, over the link  (default: $NANO_SSH)
   --port N        HTTP port of the FIRST camera; the rest take N+1, N+2 …
                                           (default: $NANO_PORT)
-  --dev LIST      comma-separated /dev/videoN to serve
-                  ('' = every capture-capable node) (default: ${NANO_DEV:-all})
+  --config FILE   name -> udev symlink camera list (default: $CONFIG)
+                  See mast/cameras.yaml for the format. Missing file or empty
+                  \`cameras:\` falls back to auto-discovering every /dev/video*.
+  --dev LIST      comma-separated camera names or devices to serve
+                  ('' = every configured/found camera) (default: ${NANO_DEV:-all})
   --res WxH       capture resolution      (default: $NANO_RES)
   --fps N         capture frame rate      (default: $NANO_FPS)
                   Snapped to the nearest rate the camera offers, never faster
                   than asked. The default is the USB 2.0 mode on purpose, for
-                  every camera; see the notes at the top of this file.
+                  every camera; see the notes at the top of this file. Per-
+                  camera overrides can also be set in --config.
   --quality N     JPEG quality 1-100      (default: $NANO_QUALITY)
   --probe | --stop | --dry
   -h, --help
@@ -88,6 +105,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --ssh)     NANO_SSH=$2; shift 2 ;;
         --port)    NANO_PORT=$2; shift 2 ;;
+        --config)  CONFIG=$2; shift 2 ;;
         --dev)     NANO_DEV=$2; shift 2 ;;
         --res)     NANO_RES=$2; shift 2 ;;
         --fps)     NANO_FPS=$2; shift 2 ;;
@@ -100,7 +118,6 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVER_SRC="$REPO/mast/camera_mjpeg_server.py"
 
 say()   { printf '  %s\n' "$*"; }
@@ -147,15 +164,117 @@ fi
 
 # ==================================================== find the cameras ==
 #
-# Every capture-capable node, not just the first: this rover carries two
-# arducams and will carry more. No udev rules on this box, so node numbers are
-# whatever uvcvideo assigned and are NOT stable across replugs — hence
-# rediscovery on every run rather than a remembered /dev/videoN.
+# Two ways to find cameras, chosen by whether --config defines any:
+#
+#   configured  probe exactly the named symlinks in $CONFIG, one ssh call
+#               each. Lets each physical camera keep a stable name and
+#               resolution/fps/quality across replugs and node renumbering.
+#   discovered  probe every /dev/video* node found (the original behaviour),
+#               named after its device basename (e.g. "video0"). Used when
+#               $CONFIG has no uncommented lines.
+#
+# Either way the result is CAMS, one line per working camera:
+#   name|device|usb-path|usb-speed|product|res|fps|quality
 
 head_ "Cameras"
 nexec "pkill -f '[c]amera_mjpeg_server\.py' 2>/dev/null; sleep 1; true"
+
+# Parsed locally with python3+PyYAML (already a repo dependency — see
+# src/gs_joy) rather than a hand-rolled YAML reader in bash.
+CONF_CAMS=""
+if [ -f "$CONFIG" ]; then
+    PARSED=$(python3 - "$CONFIG" <<'PY'
+import sys
+import yaml
+
+path = sys.argv[1]
+try:
+    with open(path) as f:
+        doc = yaml.safe_load(f) or {}
+except Exception as exc:                            # noqa: BLE001
+    print('ERROR|%s: %s' % (path, exc))
+    sys.exit(0)
+
+cams = doc.get('cameras') or {}
+if not isinstance(cams, dict):
+    print('ERROR|%s: top-level "cameras" must map name -> {device, ...}' % path)
+    sys.exit(0)
+
+for name, cfg in cams.items():
+    cfg = cfg or {}
+    device = cfg.get('device')
+    if not device:
+        print('ERROR|%s: camera "%s" has no device' % (path, name))
+        sys.exit(0)
+    print('OK|%s|%s|%s|%s|%s' % (
+        name, device, cfg.get('res', ''), cfg.get('fps', ''), cfg.get('quality', '')))
+PY
+) || die "cannot parse $CONFIG — is PyYAML installed? (pip install pyyaml)"
+
+    while IFS='|' read -r STATUS NAME DEV RES FPS QUALITY; do
+        [ -n "$STATUS" ] || continue
+        [ "$STATUS" = ERROR ] && die "$NAME"
+        [ -n "$RES" ] && [ "$RES" != "-" ] || RES=$NANO_RES
+        [ -n "$FPS" ] && [ "$FPS" != "-" ] || FPS=$NANO_FPS
+        [ -n "$QUALITY" ] && [ "$QUALITY" != "-" ] || QUALITY=$NANO_QUALITY
+        CONF_CAMS="$CONF_CAMS$NAME|$DEV|$RES|$FPS|$QUALITY
+"
+    done <<EOF
+$PARSED
+EOF
+fi
+
+# One ssh call per configured camera, checking the exact symlink named in
+# $CONFIG (v4l2-ctl and the sysfs walk both follow it). Simpler and safer than
+# folding a variable-length camera list into one remote script, and cheap: a
+# handful of ssh round trips, not the hundreds this project scales to.
+probe_camera() {
+    NAME=$1 DEV=$2
+    $SSH "$NANO_SSH" "
+        d='$DEV'
+        if [ ! -e \"\$d\" ]; then
+            echo 'SKIP|$NAME|$DEV||||not present (symlink missing — replugged, or udev rule not installed?)'
+            exit 0
+        fi
+        real=\$(readlink -f \"\$d\")
+        n=\$(basename \"\$real\")
+        sys=\$(readlink -f /sys/class/video4linux/\$n/device/..)
+        info=\"\$(basename \$sys)|\$(cat \$sys/speed 2>/dev/null)|\$(cat \$sys/product 2>/dev/null)\"
+        if ! v4l2-ctl -d \"\$d\" --list-formats 2>/dev/null | grep -q 'Video Capture'; then
+            echo \"SKIP|$NAME|$DEV|\$info|not a capture node\"
+            exit 0
+        fi
+        # A node can enumerate and still refuse to stream (a camera that
+        # trained at SuperSpeed and then wedged leaves a stale node behind).
+        # Demand one real frame before believing in a camera.
+        err=\$(timeout 8 v4l2-ctl -d \"\$d\" --stream-mmap --stream-count=1 2>&1)
+        rc=\$?
+        if [ \$rc -ne 0 ]; then
+            why=\$(echo \"\$err\" | grep -m1 -i 'failed\|error' | tr -d '|')
+            [ \$rc = 124 ] && why=\"timed out after 8s\${why:+ — \$why}\"
+            echo \"SKIP|$NAME|$DEV|\$info|no frame: \${why:-VIDIOC_STREAMON did not succeed}\"
+            exit 0
+        fi
+        echo \"OK|$NAME|$DEV|\$info\"
+    " 2>/dev/null
+}
+
 if [ "$DRY" = 1 ]; then
-    CAMS="/dev/videoDRY|2-1.1|5000|(dry run)"
+    CAMS="dry-cam|/dev/videoDRY|2-1.1|5000|(dry run)|$NANO_RES|$NANO_FPS|$NANO_QUALITY"
+elif [ -n "$CONF_CAMS" ]; then
+    CAMS="" REJECTED=""
+    while IFS='|' read -r NAME DEV RES FPS QUALITY; do
+        [ -n "$NAME" ] || continue
+        RESULT=$(probe_camera "$NAME" "$DEV")
+        case "$RESULT" in
+            OK\|*)   CAMS="$CAMS${RESULT#OK|}|$RES|$FPS|$QUALITY
+" ;;
+            SKIP\|*) REJECTED="$REJECTED${RESULT#SKIP|}
+" ;;
+        esac
+    done <<EOF
+$CONF_CAMS
+EOF
 else
     CAMS=$($SSH "$NANO_SSH" '
         for d in /dev/video*; do
@@ -167,9 +286,6 @@ else
                 echo "SKIP|$info|not a capture node"
                 continue
             fi
-            # A node can enumerate and still refuse to stream (a camera that
-            # trained at SuperSpeed and then wedged leaves a stale node
-            # behind). Demand one real frame before believing in a camera.
             err=$(timeout 8 v4l2-ctl -d "$d" --stream-mmap --stream-count=1 2>&1)
             rc=$?
             if [ $rc -ne 0 ]; then
@@ -181,25 +297,39 @@ else
             echo "OK|$info"
         done' 2>/dev/null)
 
-    # Split the two answers apart: what will be served, and what was found but
-    # rejected. The rejected list is the whole point of the reporting below.
     REJECTED=$(printf '%s\n' "$CAMS" | sed -n 's/^SKIP|//p')
     CAMS=$(printf '%s\n' "$CAMS" | sed -n 's/^OK|//p')
+    # No --config: name each camera after its device basename (e.g. "video0"),
+    # and give every one the same global res/fps/quality.
+    CAMS=$(printf '%s\n' "$CAMS" | awk -F'|' -v res="$NANO_RES" -v fps="$NANO_FPS" -v q="$NANO_QUALITY" \
+        'BEGIN{OFS="|"} NF{n=$1; sub(/^.*\//,"",n); print n,$1,$2,$3,$4,res,fps,q}')
+    REJECTED=$(printf '%s\n' "$REJECTED" | awk -F'|' \
+        'BEGIN{OFS="|"} NF{n=$1; sub(/^.*\//,"",n); print n,$1,$2,$3,$4,$5}')
+fi
 
+if [ "$DRY" != 1 ]; then
     if [ -z "$CAMS" ]; then
         if [ -z "$REJECTED" ]; then
-            die "no /dev/video* on the Jetson at all — is the camera plugged in? (check lsusb)"
+            if [ -n "$CONF_CAMS" ]; then
+                die "none of the cameras in $CONFIG are present on the Jetson — check the symlinks and udev rules"
+            else
+                die "no /dev/video* on the Jetson at all — is the camera plugged in? (check lsusb)"
+            fi
         fi
-        warn "video nodes exist, but none of them produced a frame:"
-        printf '%s\n' "$REJECTED" | while IFS='|' read -r DEV UPATH SPEED CARD WHY; do
-            [ -n "$DEV" ] || continue
-            say "  $DEV  ${CARD:-unknown}"
-            say "    USB $UPATH at ${SPEED}M — $WHY"
+        warn "camera(s) found, but none of them produced a frame:"
+        printf '%s\n' "$REJECTED" | while IFS='|' read -r NAME DEV UPATH SPEED CARD WHY; do
+            [ -n "$NAME" ] || continue
+            say "  $NAME  $DEV  ${CARD:-unknown}"
+            if [ -n "$UPATH" ]; then
+                say "    USB $UPATH at ${SPEED}M — $WHY"
+            else
+                say "    $WHY"
+            fi
         done
         # A rejected node at 5000M is not a mystery, it is the known-bad case.
-        if printf '%s\n' "$REJECTED" | awk -F'|' '$3 == 5000 { hit = 1 } END { exit !hit }'; then
+        if printf '%s\n' "$REJECTED" | awk -F'|' '$4 == 5000 { hit = 1 } END { exit !hit }'; then
             say ""
-            say "At least one node is at 5000M, which is the known-bad case on this"
+            say "At least one camera is at 5000M, which is the known-bad case on this"
             say "board. SuperSpeed here fails the UVC probe control with EPROTO:"
             say "  uvcvideo: Failed to set UVC probe control : -71"
             say "so the node never streams and looks exactly like an absent camera."
@@ -216,23 +346,24 @@ else
         die "no camera on the Jetson produced a frame"
     fi
 
-    # --dev restricts the set, so one camera can be restarted without disturbing
-    # the other's stream.
+    # --dev restricts the set (by name or by device), so one camera can be
+    # restarted without disturbing the others' streams.
     if [ -n "$NANO_DEV" ]; then
         CAMS=$(printf '%s\n' "$CAMS" | awk -v want="$NANO_DEV" -F'|' '
             BEGIN { n = split(want, a, ","); for (i = 1; i <= n; i++) keep[a[i]] = 1 }
-            $1 in keep')
-        [ -n "$CAMS" ] || die "none of --dev '$NANO_DEV' is a capture-capable node on the Jetson"
+            ($1 in keep) || ($2 in keep)')
+        [ -n "$CAMS" ] || die "none of --dev '$NANO_DEV' matches a configured/found camera (by name or device)"
     fi
 fi
 
 PORT=$NANO_PORT
-while IFS='|' read -r DEV UPATH SPEED CARD; do
+while IFS='|' read -r NAME DEV UPATH SPEED CARD RES FPS QUALITY; do
     [ -n "$DEV" ] || continue
     say ""
-    say "$DEV  ->  port $PORT"
+    say "$NAME  ($DEV)  ->  port $PORT"
     say "  $CARD"
     say "  USB $UPATH at ${SPEED}M (5000 = USB 3.0, 480 = USB 2.0)"
+    say "  capture $RES @ ${FPS}fps, quality $QUALITY"
 
     # Hub depth is what actually breaks SuperSpeed here: cascaded hubs are fine
     # at 480M and fail at 5000M with EPROTO (-71), which shows up as flat green
@@ -316,23 +447,23 @@ head_ "Streams"
 
 PORT=$NANO_PORT
 STARTED=""
-while IFS='|' read -r DEV UPATH SPEED CARD; do
+while IFS='|' read -r NAME DEV UPATH SPEED CARD RES FPS QUALITY; do
     [ -n "$DEV" ] || continue
-    LOG=/tmp/camera_mjpeg_$(basename "$DEV").log
+    LOG=/tmp/camera_mjpeg_$NAME.log
     # Container mode uses `docker exec -d`, which is already detached and
     # cannot redirect to a host path, so the nohup/redirect wrapper is
     # host-only. Container logs come from `docker logs`/the exec's own stdout.
     if [ "${CAM_RUNTIME:-host}" = container ]; then
         nexec "$CAM_PY \
-            --device $DEV --width ${NANO_RES%x*} --height ${NANO_RES#*x} \
-            --fps $NANO_FPS --quality $NANO_QUALITY --port $PORT"
+            --device $DEV --width ${RES%x*} --height ${RES#*x} \
+            --fps $FPS --quality $QUALITY --port $PORT --name $NAME"
     else
         nexec "nohup $CAM_PY \
-            --device $DEV --width ${NANO_RES%x*} --height ${NANO_RES#*x} \
-            --fps $NANO_FPS --quality $NANO_QUALITY --port $PORT \
+            --device $DEV --width ${RES%x*} --height ${RES#*x} \
+            --fps $FPS --quality $QUALITY --port $PORT --name $NAME \
             >$LOG 2>&1 & true"
     fi
-    STARTED="$STARTED$DEV|$PORT|$LOG
+    STARTED="$STARTED$NAME|$DEV|$PORT|$LOG
 "
     PORT=$((PORT + 1))
 done <<EOF
@@ -340,8 +471,8 @@ $CAMS
 EOF
 
 if [ "$DRY" = 1 ]; then
-    printf '%s' "$STARTED" | while IFS='|' read -r DEV PORT LOG; do
-        [ -n "$DEV" ] && say "would serve $DEV on http://$NANO_HOST:$PORT/?action=stream"
+    printf '%s' "$STARTED" | while IFS='|' read -r NAME DEV PORT LOG; do
+        [ -n "$DEV" ] && say "would serve $NAME ($DEV) on http://$NANO_HOST:$PORT/$NAME?action=stream"
     done
     exit 0
 fi
@@ -358,9 +489,9 @@ sleep 4
 head_ "Verify from the GS"
 FAILED=0
 OK_URLS=""
-printf '%s' "$STARTED" | while IFS='|' read -r DEV PORT LOG; do
+printf '%s' "$STARTED" | while IFS='|' read -r NAME DEV PORT LOG; do
     [ -n "$DEV" ] || continue
-    URL="http://$NANO_HOST:$PORT/?action=stream"
+    URL="http://$NANO_HOST:$PORT/$NAME?action=stream"
     CT=$(curl -s -m 8 -o /dev/null -D - "$URL" 2>/dev/null | grep -i '^content-type:' | tr -d '\r')
     HEALTH=$(curl -s -m 5 "http://$NANO_HOST:$PORT/health" 2>/dev/null)
     # Content-Type alone is NOT enough: the HTTP server comes up whether or not
@@ -368,22 +499,22 @@ printf '%s' "$STARTED" | while IFS='|' read -r DEV PORT LOG; do
     # zero frames. A feed serving nothing must never read as healthy.
     FRAMES=$(printf '%s' "$HEALTH" | sed -n 's/.*frames=\([0-9]*\).*/\1/p')
     if printf '%s' "$CT" | grep -qi 'multipart/x-mixed-replace' && [ "${FRAMES:-0}" -gt 0 ]; then
-        ok "$DEV  $HEALTH"
+        ok "$NAME  $HEALTH"
         say "     $URL"
     elif printf '%s' "$CT" | grep -qi 'multipart/x-mixed-replace'; then
-        warn "$DEV on port $PORT is serving NO FRAMES — $HEALTH"
+        warn "$NAME ($DEV) on port $PORT is serving NO FRAMES — $HEALTH"
         say  "     the server is up but the camera never opened; last log lines:"
         $SSH "$NANO_SSH" "tail -4 $LOG 2>/dev/null" 2>/dev/null | sed 's/^/       /'
     else
-        warn "$DEV on port $PORT is not serving MJPEG at all"
+        warn "$NAME ($DEV) on port $PORT is not serving MJPEG at all"
         say  "     on the Jetson: tail $LOG"
         $SSH "$NANO_SSH" "tail -6 $LOG 2>/dev/null" 2>/dev/null | sed 's/^/       /'
     fi
 done
 
 printf '\n  \033[1mPoint UI tiles at:\033[0m\n'
-printf '%s' "$STARTED" | while IFS='|' read -r DEV PORT LOG; do
-    [ -n "$DEV" ] && printf '    %s\n' "http://$NANO_HOST:$PORT/?action=stream"
+printf '%s' "$STARTED" | while IFS='|' read -r NAME DEV PORT LOG; do
+    [ -n "$DEV" ] && printf '    %-16s %s\n' "$NAME" "http://$NANO_HOST:$PORT/$NAME?action=stream"
 done
 say ""
 say "Settings dialog -> Cameras -> paste one into each row's \"Image topic / URL\" box."

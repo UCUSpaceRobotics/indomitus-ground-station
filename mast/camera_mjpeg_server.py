@@ -82,12 +82,13 @@ def pick_mode(modes, want_w, want_h, want_fps):
 class Camera:
     """Grabs frames in the background, holding only the newest JPEG."""
 
-    def __init__(self, device, width, height, fps, quality):
+    def __init__(self, device, width, height, fps, quality, name=None):
         self.device = device
         self.width = width
         self.height = height
         self.fps = fps
         self.quality = int(quality)
+        self.name = name or device
 
         self._jpeg = None
         self._seq = 0
@@ -119,8 +120,8 @@ class Camera:
                int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
                cap.get(cv2.CAP_PROP_FPS))
         self.mode = '%dx%d@%.0f' % got
-        print('camera open: %dx%d @ %.0f fps, jpeg q%d'
-              % (got[0], got[1], got[2], self.quality), flush=True)
+        print('%s: camera open: %dx%d @ %.0f fps, jpeg q%d'
+              % (self.name, got[0], got[1], got[2], self.quality), flush=True)
         return cap
 
     def run(self):
@@ -145,7 +146,8 @@ class Camera:
                 # Reopen rather than exit, so a dropped camera recovers on its
                 # own instead of needing someone to ssh in and restart it.
                 self.errors += 1
-                print('capture error: %s (reopening)' % exc, file=sys.stderr, flush=True)
+                print('%s: capture error: %s (reopening)' % (self.name, exc),
+                      file=sys.stderr, flush=True)
                 if cap is not None:
                     cap.release()
                     cap = None
@@ -187,8 +189,8 @@ class Handler(BaseHTTPRequestHandler):
     def _health(self):
         cam = self.camera
         up = time.time() - cam.started
-        body = ('ok mode=%s frames=%d errors=%d uptime=%.0fs fps=%.1f\n'
-                % (cam.mode, cam.frames, cam.errors, up,
+        body = ('ok name=%s mode=%s frames=%d errors=%d uptime=%.0fs fps=%.1f\n'
+                % (cam.name, cam.mode, cam.frames, cam.errors, up,
                    cam.frames / up if up else 0)).encode()
         self.send_response(200)
         self.send_header('Content-Type', 'text/plain')
@@ -244,14 +246,17 @@ def main():
     ap.add_argument('--quality', type=int, default=80, help='JPEG quality 1-100')
     ap.add_argument('--port', type=int, default=8090)
     ap.add_argument('--bind', default='0.0.0.0')
+    ap.add_argument('--name', default=None,
+                     help='camera name, for logs and /health (default: --device)')
     args = ap.parse_args()
 
-    cam = Camera(args.device, args.width, args.height, args.fps, args.quality)
+    cam = Camera(args.device, args.width, args.height, args.fps, args.quality, args.name)
     threading.Thread(target=cam.run, daemon=True).start()
 
     Handler.camera = cam
     server = Server((args.bind, args.port), Handler)
-    print('serving http://%s:%d/?action=stream' % (args.bind, args.port), flush=True)
+    print('%s: serving http://%s:%d/%s?action=stream'
+          % (cam.name, args.bind, args.port, args.name or ''), flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

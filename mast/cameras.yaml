@@ -1,0 +1,74 @@
+# mast/cameras.yaml — the concrete list of cameras this rover carries.
+#
+# Each entry under `cameras` maps a friendly camera name to the udev symlink
+# for that camera — NOT /dev/videoN, since node numbers move across replugs
+# and symlinks don't. start-cameras.sh uses the name for:
+#
+#   the stream URL:       http://<jetson>:<port>/<name>?action=stream
+#   the remote log file:  /tmp/camera_mjpeg_<name>.log
+#
+# so keep names short and URL-safe (letters, digits, - and _; no spaces).
+#
+# `device` is required. `res`, `fps`, and `quality` are optional per camera —
+# omit any of them to fall back to start-cameras.sh's --res/--fps/--quality
+# (or their env vars). Useful when different camera models on the same rover
+# want different settings.
+#
+# If `cameras` is empty or this file is missing, start-cameras.sh instead
+# auto-discovers every /dev/video* node, as it always used to.
+#
+# Example, once udev creates these symlinks:
+#
+# cameras:
+#   arducam-mast:
+#     device: /dev/arducam-mast
+#   arducam-front:
+#     device: /dev/arducam-front
+#     res: 960x600
+#     fps: 10
+#     quality: 80
+#   arducam-rear:
+#     device: /dev/arducam-rear
+#     res: 960x600
+#     fps: 10
+#     quality: 80
+#   spectral-camera-front:
+#     device: /dev/spectral-camera
+#     res: 960x600
+#     fps: 10
+#     quality: 80
+
+cameras:
+  arducam-mast:
+    device: /dev/arducam-mast
+  arducam-front:
+    device: /dev/arducam-front
+    res: 960x600
+    fps: 10
+    quality: 80
+  arducam-rear:
+    device: /dev/arducam-rear
+    res: 960x600
+    fps: 10
+    quality: 80
+  spectral-camera-front:
+    device: /dev/spectral-camera
+    res: 960x600
+    fps: 10
+    quality: 80
+  spectral-camera-front:
+    device: /dev/spectral-camera
+    res: 960x600
+    fps: 10
+    quality: 80
+  thermal-camera-front:
+    device: /dev/thermal-camera
+  thermal-camera-front:
+    device: /dev/thermal-camera
+    res: 960x600
+    fps: 10
+    quality: 80
+  arm-camera:
+    device: /dev/arm-camera
+  zed2i-stereo-camera-front:
+    device: /dev/zed2i-stereo-camera
