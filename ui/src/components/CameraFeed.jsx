@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CameraOff, Image as ImageIcon, RefreshCw, Radio, RotateCw } from 'lucide-react';
-import { VIDEO_MODES, isDirectUrl, mjpegUrl, placeholderFor, snapshotUrl, useConfig } from '../config';
+import { VIDEO_MODES, isDirectUrl, mjpegUrl, placeholderFor, useConfig } from '../config';
 import { useTopic, useTick, isStale } from '../ros/useTopic';
 import { fmtAge, fmtNumber, stampToMs } from '../lib/format';
 import { rotateCamera, useRotation } from '../lib/rotation';
+import { paintMirror, drawMirror, subscribeMirror } from '../lib/frameMirror';
 
 const RETRY_BASE_MS = 1000;
 const RETRY_MAX_MS = 15_000;
-const SNAPSHOT_INTERVAL_MS = 2000;
 
 function retryDelay(attempt) {
   return Math.min(RETRY_BASE_MS * 2 ** Math.max(0, attempt - 1), RETRY_MAX_MS);
@@ -30,7 +30,7 @@ function bust(src, nonce) {
  * unmount — leaving an <img> pointed at a multipart response keeps the HTTP
  * connection (and the rover-side encoder) working for a pane nobody is watching.
  */
-function MjpegImage({ src, alt, onStatus }) {
+function MjpegImage({ src, alt, cameraId, onStatus }) {
   const imgRef = useRef(null);
   const attemptRef = useRef(0);
   const [nonce, setNonce] = useState(0);
@@ -47,6 +47,7 @@ function MjpegImage({ src, alt, onStatus }) {
       if (closed) return;
       attemptRef.current = 0;
       onStatus('live');
+      paintMirror(cameraId, img);
     };
 
     const handleError = () => {
@@ -69,30 +70,31 @@ function MjpegImage({ src, alt, onStatus }) {
       img.removeEventListener('error', handleError);
       img.removeAttribute('src');
     };
-  }, [src, nonce, onStatus]);
+  }, [src, nonce, cameraId, onStatus]);
 
   return <img ref={imgRef} alt={alt} className="feed-img" />;
 }
 
-/** Still frames polled on an interval, for the thumbnail strip: a six-camera
- *  focus view then opens one stream instead of six. */
-function SnapshotImage({ src, alt, onStatus }) {
-  const [nonce, setNonce] = useState(0);
+/**
+ * Thumbnail strip: shows the last frame `frameMirror` has for this camera,
+ * with no request of its own — a camera not currently the focused pane opens
+ * no connection, so the rover neither captures nor encodes it (see
+ * cameras/camera_mjpeg_server.py). Redraws only when a stream open elsewhere
+ * (the main pane, or a grid tile) paints a new frame into the mirror.
+ */
+function MirrorCanvas({ alt, cameraId, onStatus }) {
+  const canvasRef = useRef(null);
 
   useEffect(() => {
-    const timer = setInterval(() => setNonce((n) => n + 1), SNAPSHOT_INTERVAL_MS);
-    return () => clearInterval(timer);
-  }, []);
+    const canvas = canvasRef.current;
+    if (!canvas) return undefined;
 
-  return (
-    <img
-      className="feed-img"
-      alt={alt}
-      src={bust(src, nonce)}
-      onLoad={() => onStatus('live')}
-      onError={() => onStatus('error')}
-    />
-  );
+    const draw = () => onStatus(drawMirror(cameraId, canvas) ? 'live' : 'connecting');
+    draw();
+    return subscribeMirror(cameraId, draw);
+  }, [cameraId, onStatus]);
+
+  return <canvas className="feed-img" role="img" aria-label={alt} ref={canvasRef} />;
 }
 
 /**
@@ -162,20 +164,14 @@ export default function CameraFeed({ camera, variant = 'main', className = '' })
       );
     }
   } else if (isThumb) {
-    media = (
-      <SnapshotImage
-        key={reloadKey}
-        src={snapshotUrl(config, camera.topic)}
-        alt={camera.name}
-        onStatus={handleStatus}
-      />
-    );
+    media = <MirrorCanvas cameraId={camera.id} alt={camera.name} onStatus={handleStatus} />;
   } else {
     media = (
       <MjpegImage
         key={reloadKey}
         src={mjpegUrl(config, camera.topic)}
         alt={camera.name}
+        cameraId={camera.id}
         onStatus={handleStatus}
       />
     );

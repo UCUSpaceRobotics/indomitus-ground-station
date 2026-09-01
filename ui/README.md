@@ -88,8 +88,12 @@ opened somewhere else; a hard-coded `localhost` does not.
   from a live one. Costs noticeably more bandwidth; base64 over the websocket is
   roughly a third larger than the raw JPEG.
 
-In focus layout the thumbnail strip polls `/snapshot` at 0.5 Hz instead of
-opening a stream per camera; the grid layout streams every visible tile.
+In focus layout the thumbnail strip opens no connection of its own: each
+thumbnail shows the last frame `ui/src/lib/frameMirror.js` captured for that
+camera while it was live elsewhere (the main pane, or a grid tile), so an
+unfocused camera costs nothing on the rover — see the viewer-counted capture
+in `cameras/camera_mjpeg_server.py`. The grid layout streams every visible
+tile live.
 
 ### Cameras outside ROS
 

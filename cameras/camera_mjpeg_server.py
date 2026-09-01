@@ -3,12 +3,14 @@
 
 See the header of cameras/start-cameras.sh for why this exists instead of ROS.
 
-URL paths deliberately match mjpg-streamer's, because the UI derives the
-snapshot URL from the stream URL by swapping action=stream for action=snapshot
-(see snapshotUrl() in ui/src/config.js):
+Capture is viewer-counted: the camera stays closed and idle until a stream
+connects, and closes again once the last one disconnects, so a camera nobody
+is watching costs no USB bandwidth or CPU (ui/src/lib/frameMirror.js shows
+each camera's last frame in the UI's thumbnail strip without opening a
+connection at all).
 
-    /?action=stream     multipart/x-mixed-replace, the camera tiles
-    /?action=snapshot   one JPEG, the thumbnail strip
+    /?action=stream     multipart/x-mixed-replace, opens/keeps the camera live
+    /?action=snapshot   one JPEG from whatever is currently captured, if any
     /health             plain text, for scripts
 """
 
@@ -95,10 +97,25 @@ class Camera:
         self._seq = 0
         self._cond = threading.Condition()
         self._stop = threading.Event()
-        self.mode = 'unopened'
+        self._viewers = 0
+        self.mode = 'idle'
         self.frames = 0
         self.errors = 0
         self.started = time.time()
+
+    @property
+    def viewers(self):
+        return self._viewers
+
+    def add_viewer(self):
+        with self._cond:
+            self._viewers += 1
+            self._cond.notify_all()
+
+    def remove_viewer(self):
+        with self._cond:
+            self._viewers = max(0, self._viewers - 1)
+            self._cond.notify_all()
 
     def open(self):
         w, h, fps, note = pick_mode(enumerate_modes(self.device),
@@ -130,6 +147,14 @@ class Camera:
     def run(self):
         cap = None
         while not self._stop.is_set():
+            # No viewers: stay closed and idle rather than capturing for
+            # nobody. Woken by add_viewer() or stop().
+            with self._cond:
+                while self._viewers == 0 and not self._stop.is_set():
+                    self._cond.wait()
+            if self._stop.is_set():
+                break
+
             try:
                 if cap is None:
                     cap = self.open()
@@ -155,6 +180,12 @@ class Camera:
                     cap.release()
                     cap = None
                 time.sleep(1.0)
+                continue
+
+            if self._viewers == 0 and cap is not None:
+                cap.release()
+                cap = None
+                self.mode = 'idle'
         if cap is not None:
             cap.release()
 
@@ -167,6 +198,8 @@ class Camera:
 
     def stop(self):
         self._stop.set()
+        with self._cond:
+            self._cond.notify_all()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -190,10 +223,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def _health(self):
+        # Doesn't call add_viewer(): a health check must not itself keep an
+        # otherwise-idle camera capturing.
         cam = self.camera
         up = time.time() - cam.started
-        body = ('ok name=%s mode=%s frames=%d errors=%d uptime=%.0fs fps=%.1f\n'
-                % (cam.name, cam.mode, cam.frames, cam.errors, up,
+        body = ('ok name=%s mode=%s viewers=%d frames=%d errors=%d uptime=%.0fs fps=%.1f\n'
+                % (cam.name, cam.mode, cam.viewers, cam.frames, cam.errors, up,
                    cam.frames / up if up else 0)).encode()
         self.send_response(200)
         self.send_header('Content-Type', 'text/plain')
@@ -214,13 +249,15 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(jpeg)
 
     def _stream(self):
-        self.send_response(200)
-        self.send_header('Cache-Control', 'no-store')
-        self.send_header('Content-Type',
-                         'multipart/x-mixed-replace; boundary=' + BOUNDARY)
-        self.end_headers()
-        seq = -1
+        # The connection itself is the "someone is watching" signal.
+        self.camera.add_viewer()
         try:
+            self.send_response(200)
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Content-Type',
+                             'multipart/x-mixed-replace; boundary=' + BOUNDARY)
+            self.end_headers()
+            seq = -1
             while True:
                 jpeg, seq = self.camera.latest(seq)
                 if jpeg is None:
@@ -232,6 +269,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(b'\r\n')
         except (BrokenPipeError, ConnectionResetError):
             pass        # the operator closed a tile; not an error
+        finally:
+            self.camera.remove_viewer()
 
 
 class Server(socketserver.ThreadingMixIn, HTTPServer):
