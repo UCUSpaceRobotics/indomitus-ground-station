@@ -25,6 +25,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 
 import cv2
+import numpy as np
 
 BOUNDARY = 'cameramjpegframe'
 
@@ -81,10 +82,27 @@ def pick_mode(modes, want_w, want_h, want_fps):
     return size[0], size[1], fps, '; '.join(notes) or 'exact'
 
 
+def split_stereo(frame, view):
+    """Cut a side-by-side stereo frame (left|right eye, concatenated on the
+    width) down to one eye. ZED-style cameras report only the combined
+    resolution over UVC — there is no separate mode for a single eye, so this
+    always runs on the full frame, not something the camera can do itself.
+    """
+    if view == 'both':
+        return frame
+    half = frame.shape[1] // 2
+    eye = frame[:, :half] if view == 'left' else frame[:, half:]
+    # The slice is a non-contiguous view (a row stride, not a copy); cv2.imencode
+    # needs contiguous memory, so make one copy of half the data here rather
+    # than let imencode do it implicitly (or fail) downstream.
+    return np.ascontiguousarray(eye)
+
+
 class Camera:
     """Grabs frames in the background, holding only the newest JPEG."""
 
-    def __init__(self, device, width, height, fps, quality, fourcc='YUYV', name=None):
+    def __init__(self, device, width, height, fps, quality, fourcc='YUYV', name=None,
+                 view='both'):
         self.device = device
         self.width = width
         self.height = height
@@ -92,6 +110,7 @@ class Camera:
         self.quality = int(quality)
         self.fourcc = fourcc
         self.name = name or device
+        self.view = view
 
         self._jpeg = None
         self._seq = 0
@@ -140,8 +159,9 @@ class Camera:
                int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
                cap.get(cv2.CAP_PROP_FPS))
         self.mode = '%dx%d@%.0f' % got
-        print('%s: camera open: %dx%d @ %.0f fps, %s, jpeg q%d'
-              % (self.name, got[0], got[1], got[2], self.fourcc, self.quality), flush=True)
+        note = ' (%s eye)' % self.view if self.view != 'both' else ''
+        print('%s: camera open: %dx%d @ %.0f fps, %s, jpeg q%d%s'
+              % (self.name, got[0], got[1], got[2], self.fourcc, self.quality, note), flush=True)
         return cap
 
     def run(self):
@@ -161,6 +181,7 @@ class Camera:
                 ok, frame = cap.read()
                 if not ok:
                     raise RuntimeError('read failed')
+                frame = split_stereo(frame, self.view)
                 ok, buf = cv2.imencode(
                     '.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.quality])
                 if not ok:
@@ -292,10 +313,14 @@ def main():
     ap.add_argument('--bind', default='0.0.0.0')
     ap.add_argument('--name', default=None,
                      help='camera name, for logs and /health (default: --device)')
+    ap.add_argument('--view', default='both', choices=('left', 'right', 'both'),
+                     help='for a side-by-side stereo camera (e.g. ZED2i), which eye '
+                          'to serve; the camera itself has no such mode, so this '
+                          'crops the joined frame in software (default: both, unsplit)')
     args = ap.parse_args()
 
     cam = Camera(args.device, args.width, args.height, args.fps, args.quality,
-                 fourcc=args.format, name=args.name)
+                 fourcc=args.format, name=args.name, view=args.view)
     threading.Thread(target=cam.run, daemon=True).start()
 
     Handler.camera = cam

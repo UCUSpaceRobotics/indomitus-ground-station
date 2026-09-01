@@ -73,6 +73,11 @@ DEFAULT_QUALITY=${DEFAULT_QUALITY:-80}   # JPEG quality; the camera gives no MJP
 # Arducam's only option; a different camera model (thermal, spectral, stereo)
 # may need a different one — set per camera in --config.
 DEFAULT_FORMAT=${DEFAULT_FORMAT:-YUYV}
+# For a side-by-side stereo camera (ZED2i): which eye to serve. The camera
+# has no such mode itself — camera_mjpeg_server.py crops the joined frame in
+# software (see split_stereo() there). 'both' serves the raw joined frame
+# unchanged. Per-camera override in --config, same as res/fps/quality/format.
+DEFAULT_VIEW=${DEFAULT_VIEW:-both}
 # Dedicated remote directory (relative to $HOME) holding camera_mjpeg_server.py
 # and, if present, a venv at .camera-venv with cv2+numpy — see CAM_VENV_PY below.
 CAM_REMOTE_DIR=${CAM_REMOTE_DIR:-cameras}
@@ -122,6 +127,9 @@ Options
   --format FMT    capture pixel format (FourCC), e.g. YUYV, MJPG, GREY
                                           (default: $DEFAULT_FORMAT)
                   Per-camera overrides can also be set in --config.
+  --view V        left|right|both eye of a side-by-side stereo camera (ZED2i)
+                                          (default: $DEFAULT_VIEW)
+                  Per-camera overrides can also be set in --config.
   --probe | --stop | --dry
   -h, --help
 
@@ -148,6 +156,7 @@ while [ $# -gt 0 ]; do
         --fps)     DEFAULT_FPS=$2; shift 2 ;;
         --quality) DEFAULT_QUALITY=$2; shift 2 ;;
         --format)  DEFAULT_FORMAT=$2; shift 2 ;;
+        --view)    DEFAULT_VIEW=$2; shift 2 ;;
         --probe)   MODE=probe; shift ;;
         --stop)    MODE=stop; shift ;;
         --dry)     DRY=1; shift ;;
@@ -248,20 +257,21 @@ for name, cfg in cams.items():
     if not device:
         print('ERROR|%s: camera "%s" has no device' % (path, name))
         sys.exit(0)
-    print('OK|%s|%s|%s|%s|%s|%s' % (
+    print('OK|%s|%s|%s|%s|%s|%s|%s' % (
         name, device, cfg.get('res', ''), cfg.get('fps', ''), cfg.get('quality', ''),
-        cfg.get('format', '')))
+        cfg.get('format', ''), cfg.get('view', '')))
 PY
 ) || die "cannot parse $CONFIG — is PyYAML installed? (pip install pyyaml)"
 
-    while IFS='|' read -r STATUS NAME DEV RES FPS QUALITY FORMAT; do
+    while IFS='|' read -r STATUS NAME DEV RES FPS QUALITY FORMAT VIEW; do
         [ -n "$STATUS" ] || continue
         [ "$STATUS" = ERROR ] && die "$NAME"
         [ -n "$RES" ] && [ "$RES" != "-" ] || RES=$DEFAULT_RES
         [ -n "$FPS" ] && [ "$FPS" != "-" ] || FPS=$DEFAULT_FPS
         [ -n "$QUALITY" ] && [ "$QUALITY" != "-" ] || QUALITY=$DEFAULT_QUALITY
         [ -n "$FORMAT" ] && [ "$FORMAT" != "-" ] || FORMAT=$DEFAULT_FORMAT
-        CONF_CAMS="$CONF_CAMS$NAME|$DEV|$RES|$FPS|$QUALITY|$FORMAT
+        [ -n "$VIEW" ] && [ "$VIEW" != "-" ] || VIEW=$DEFAULT_VIEW
+        CONF_CAMS="$CONF_CAMS$NAME|$DEV|$RES|$FPS|$QUALITY|$FORMAT|$VIEW
 "
     done <<EOF
 $PARSED
@@ -273,7 +283,8 @@ fi
 # folding a variable-length camera list into one remote script, and cheap: a
 # handful of ssh round trips, not the hundreds this project scales to.
 probe_camera() {
-    NAME=$1 DEV=$2
+    NAME=$1 DEV=$2 RES=$3 FPS=$4 FORMAT=$5
+    W=${RES%x*} H=${RES#*x}
     $SSH "$JETSON_SSH" "
         d='$DEV'
         if [ ! -e \"\$d\" ]; then
@@ -290,13 +301,17 @@ probe_camera() {
         fi
         # A node can enumerate and still refuse to stream (a camera that
         # trained at SuperSpeed and then wedged leaves a stale node behind).
-        # Demand one real frame before believing in a camera.
-        err=\$(timeout 8 v4l2-ctl -d \"\$d\" --stream-mmap --stream-count=1 2>&1)
+        # Demand one real frame before believing in a camera — in the mode
+        # this camera will actually be started in, not whatever mode the
+        # driver defaults to (a stereo cam's default is often its largest
+        # combined frame, which can time out or fail at USB 2.0 on its own).
+        err=\$(v4l2-ctl -d \"\$d\" --set-fmt-video=width=$W,height=$H,pixelformat=$FORMAT 2>&1 \
+               && timeout 8 v4l2-ctl -d \"\$d\" --stream-mmap --stream-count=1 2>&1)
         rc=\$?
         if [ \$rc -ne 0 ]; then
             why=\$(echo \"\$err\" | grep -m1 -i 'failed\|error' | tr -d '|')
             [ \$rc = 124 ] && why=\"timed out after 8s\${why:+ — \$why}\"
-            echo \"SKIP|$NAME|$DEV|\$info|no frame: \${why:-VIDIOC_STREAMON did not succeed}\"
+            echo \"SKIP|$NAME|$DEV|\$info|no frame at ${RES}@${FPS} $FORMAT: \${why:-VIDIOC_STREAMON did not succeed}\"
             exit 0
         fi
         echo \"OK|$NAME|$DEV|\$info\"
@@ -304,14 +319,14 @@ probe_camera() {
 }
 
 if [ "$DRY" = 1 ]; then
-    CAMS="dry-cam|/dev/videoDRY|2-1.1|5000|(dry run)|$DEFAULT_RES|$DEFAULT_FPS|$DEFAULT_QUALITY|$DEFAULT_FORMAT"
+    CAMS="dry-cam|/dev/videoDRY|2-1.1|5000|(dry run)|$DEFAULT_RES|$DEFAULT_FPS|$DEFAULT_QUALITY|$DEFAULT_FORMAT|$DEFAULT_VIEW"
 elif [ -n "$CONF_CAMS" ]; then
     CAMS="" REJECTED=""
-    while IFS='|' read -r NAME DEV RES FPS QUALITY FORMAT; do
+    while IFS='|' read -r NAME DEV RES FPS QUALITY FORMAT VIEW; do
         [ -n "$NAME" ] || continue
-        RESULT=$(probe_camera "$NAME" "$DEV")
+        RESULT=$(probe_camera "$NAME" "$DEV" "$RES" "$FPS" "$FORMAT")
         case "$RESULT" in
-            OK\|*)   CAMS="$CAMS${RESULT#OK|}|$RES|$FPS|$QUALITY|$FORMAT
+            OK\|*)   CAMS="$CAMS${RESULT#OK|}|$RES|$FPS|$QUALITY|$FORMAT|$VIEW
 " ;;
             SKIP\|*) REJECTED="$REJECTED${RESULT#SKIP|}
 " ;;
@@ -320,34 +335,35 @@ elif [ -n "$CONF_CAMS" ]; then
 $CONF_CAMS
 EOF
 else
-    CAMS=$($SSH "$JETSON_SSH" '
+    CAMS=$($SSH "$JETSON_SSH" "
         for d in /dev/video*; do
-            [ -e "$d" ] || continue
-            n=$(basename "$d")
-            sys=$(readlink -f /sys/class/video4linux/$n/device/..)
-            info="$d|$(basename $sys)|$(cat $sys/speed 2>/dev/null)|$(cat $sys/product 2>/dev/null)"
-            if ! v4l2-ctl -d "$d" --list-formats 2>/dev/null | grep -q "Video Capture"; then
-                echo "SKIP|$info|not a capture node"
+            [ -e \"\$d\" ] || continue
+            n=\$(basename \"\$d\")
+            sys=\$(readlink -f /sys/class/video4linux/\$n/device/..)
+            info=\"\$d|\$(basename \$sys)|\$(cat \$sys/speed 2>/dev/null)|\$(cat \$sys/product 2>/dev/null)\"
+            if ! v4l2-ctl -d \"\$d\" --list-formats 2>/dev/null | grep -q 'Video Capture'; then
+                echo \"SKIP|\$info|not a capture node\"
                 continue
             fi
-            err=$(timeout 8 v4l2-ctl -d "$d" --stream-mmap --stream-count=1 2>&1)
-            rc=$?
-            if [ $rc -ne 0 ]; then
-                why=$(echo "$err" | grep -m1 -i "failed\|error" | tr -d "|")
-                [ $rc = 124 ] && why="timed out after 8s${why:+ — $why}"
-                echo "SKIP|$info|no frame: ${why:-VIDIOC_STREAMON did not succeed}"
+            err=\$(v4l2-ctl -d \"\$d\" --set-fmt-video=width=${DEFAULT_RES%x*},height=${DEFAULT_RES#*x},pixelformat=$DEFAULT_FORMAT 2>&1 \
+                   && timeout 8 v4l2-ctl -d \"\$d\" --stream-mmap --stream-count=1 2>&1)
+            rc=\$?
+            if [ \$rc -ne 0 ]; then
+                why=\$(echo \"\$err\" | grep -m1 -i 'failed\|error' | tr -d '|')
+                [ \$rc = 124 ] && why=\"timed out after 8s\${why:+ — \$why}\"
+                echo \"SKIP|\$info|no frame: \${why:-VIDIOC_STREAMON did not succeed}\"
                 continue
             fi
-            echo "OK|$info"
-        done' 2>/dev/null)
+            echo \"OK|\$info\"
+        done" 2>/dev/null)
 
     REJECTED=$(printf '%s\n' "$CAMS" | sed -n 's/^SKIP|//p')
     CAMS=$(printf '%s\n' "$CAMS" | sed -n 's/^OK|//p')
     # No --config: name each camera after its device basename (e.g. "video0"),
-    # and give every one the same global res/fps/quality/format.
+    # and give every one the same global res/fps/quality/format/view.
     CAMS=$(printf '%s\n' "$CAMS" | awk -F'|' -v res="$DEFAULT_RES" -v fps="$DEFAULT_FPS" \
-        -v q="$DEFAULT_QUALITY" -v fmt="$DEFAULT_FORMAT" \
-        'BEGIN{OFS="|"} NF{n=$1; sub(/^.*\//,"",n); print n,$1,$2,$3,$4,res,fps,q,fmt}')
+        -v q="$DEFAULT_QUALITY" -v fmt="$DEFAULT_FORMAT" -v view="$DEFAULT_VIEW" \
+        'BEGIN{OFS="|"} NF{n=$1; sub(/^.*\//,"",n); print n,$1,$2,$3,$4,res,fps,q,fmt,view}')
     REJECTED=$(printf '%s\n' "$REJECTED" | awk -F'|' \
         'BEGIN{OFS="|"} NF{n=$1; sub(/^.*\//,"",n); print n,$1,$2,$3,$4,$5}')
 fi
@@ -406,13 +422,13 @@ if [ "$DRY" != 1 ]; then
 fi
 
 PORT=$FIRST_PORT
-while IFS='|' read -r NAME DEV UPATH SPEED CARD RES FPS QUALITY FORMAT; do
+while IFS='|' read -r NAME DEV UPATH SPEED CARD RES FPS QUALITY FORMAT VIEW; do
     [ -n "$DEV" ] || continue
     say ""
     say "$NAME  ($DEV)  ->  port $PORT"
     say "  $CARD"
     say "  USB $UPATH at ${SPEED}M (5000 = USB 3.0, 480 = USB 2.0)"
-    say "  capture $RES @ ${FPS}fps, $FORMAT, quality $QUALITY"
+    say "  capture $RES @ ${FPS}fps, $FORMAT, quality $QUALITY$( [ "$VIEW" != both ] && printf ', %s eye' "$VIEW" )"
 
     # Hub depth is what actually breaks SuperSpeed here: cascaded hubs are fine
     # at 480M and fail at 5000M with EPROTO (-71), which shows up as flat green
@@ -515,7 +531,7 @@ head_ "Streams"
 
 PORT=$FIRST_PORT
 STARTED=""
-while IFS='|' read -r NAME DEV UPATH SPEED CARD RES FPS QUALITY FORMAT; do
+while IFS='|' read -r NAME DEV UPATH SPEED CARD RES FPS QUALITY FORMAT VIEW; do
     [ -n "$DEV" ] || continue
     LOG=/tmp/camera_mjpeg_$NAME.log
     # Container mode uses `docker exec -d`, which is already detached and
@@ -524,11 +540,11 @@ while IFS='|' read -r NAME DEV UPATH SPEED CARD RES FPS QUALITY FORMAT; do
     if [ "${CAM_RUNTIME:-host}" = container ]; then
         nexec "$CAM_PY \
             --device $DEV --width ${RES%x*} --height ${RES#*x} \
-            --fps $FPS --quality $QUALITY --format $FORMAT --port $PORT --name $NAME"
+            --fps $FPS --quality $QUALITY --format $FORMAT --view $VIEW --port $PORT --name $NAME"
     else
         nexec "nohup $CAM_PY \
             --device $DEV --width ${RES%x*} --height ${RES#*x} \
-            --fps $FPS --quality $QUALITY --format $FORMAT --port $PORT --name $NAME \
+            --fps $FPS --quality $QUALITY --format $FORMAT --view $VIEW --port $PORT --name $NAME \
             >$LOG 2>&1 & true"
     fi
     STARTED="$STARTED$NAME|$DEV|$PORT|$LOG

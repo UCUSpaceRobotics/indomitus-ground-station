@@ -11,11 +11,18 @@ cameras:
   # 1344x376 @100/60/30/15fps
   # 3840x1080 @30/15fps
   # 4416x1242 @15fps
+  # Every mode above is two eyes side by side in one frame (width = 2x a
+  # single eye's width, e.g. 1344x376 is two 672x376 images) — the camera has
+  # no single-eye UVC mode. `view` picks which half start-cameras.sh serves,
+  # cropped in software (see split_stereo() in camera_mjpeg_server.py):
+  #   left | right   one eye, cropped from the joined frame
+  #   both           the raw joined frame, uncropped (default if omitted)
   zed2i-stereo-camera-front:
     device: /dev/zed2i-stereo-camera
     res: 1344x376
     fps: 15
     quality: 60
+    view: left
 
   # YUYV:
   # 1920x1200 @50/30/15fps
