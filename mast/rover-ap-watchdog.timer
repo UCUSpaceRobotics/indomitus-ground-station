@@ -1,0 +1,9 @@
+[Unit]
+Description=Check the rover AP 3 minutes after boot
+
+[Timer]
+OnBootSec=180
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

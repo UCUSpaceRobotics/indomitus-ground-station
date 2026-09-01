@@ -1,0 +1,9 @@
+# OnFailure only catches hostapd exiting. It does NOT catch hostapd running
+# happily while the interface has no address, which is equally unreachable.
+# This checks the outcome rather than the process, once, after boot settles.
+[Unit]
+Description=Verify the rover AP is actually usable, else fall back
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/rover-ap-watchdog

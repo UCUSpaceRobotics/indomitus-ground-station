@@ -1,0 +1,15 @@
+# Put the 20 MHz NM Hotspot back. Triggered by rover-ap.service's OnFailure and
+# by the watchdog. This is the only thing standing between a bad hostapd config
+# and a rover nobody can reach.
+[Unit]
+Description=Restore the NetworkManager Hotspot (20 MHz fallback)
+
+[Service]
+Type=oneshot
+ExecStart=-/usr/bin/systemctl stop rover-ap-dhcp.service
+ExecStart=-/usr/bin/systemctl stop rover-ap.service
+ExecStart=-/sbin/ip addr flush dev wlx00c0caba86c1
+ExecStart=/usr/bin/nmcli dev set wlx00c0caba86c1 managed yes
+ExecStart=/bin/sleep 3
+ExecStart=-/usr/bin/nmcli con up Hotspot
+ExecStart=/usr/bin/logger -t rover-ap "FELL BACK to the NM Hotspot at 20 MHz"

@@ -74,18 +74,18 @@ class Function:
 #: Everything the console can be wired to. drive_* are owned by
 #: rover_teleop/drive_power_node, lights by rover_peripherals.
 FUNCTIONS = (
-    Function('drive_power', 'Drive power', '/drive/power', '/drive/power/toggle'),
-    Function('drive_compact', 'Drive compact', '/drive/compact', '/drive/compact/toggle'),
+    Function('drive_power', 'Drive power', '/rover/drive/power', '/rover/drive/power/toggle'),
+    Function('drive_compact', 'Drive compact', '/rover/drive/compact', '/rover/drive/compact/toggle'),
     # No absolute form: clearing a fault is an action, not a state.
-    Function('drive_clear_errors', 'Clear drive errors', '', '/drive/clear_errors'),
-    Function('spotlight', 'Spotlight', '/lights/spotlight', '/lights/spotlight/toggle'),
-    Function('beautiful', 'Beautiful lights', '/lights/beautiful', '/lights/beautiful/toggle'),
+    Function('drive_clear_errors', 'Clear drive errors', '', '/rover/drive/clear_errors'),
+    Function('spotlight', 'Spotlight', '/rover/lights/spotlight', '/rover/lights/spotlight/toggle'),
+    Function('beautiful', 'Beautiful lights', '/rover/lights/beautiful', '/rover/lights/beautiful/toggle'),
     # The tower's three lamps, one switch each. lights/traffic_light drives the
     # same lamps together, but a console switch holds exactly one of them and
     # cannot describe the other two, so each gets its own pair.
-    Function('light_red', 'Red light', '/lights/red', '/lights/red/toggle'),
-    Function('light_green', 'Green light', '/lights/green', '/lights/green/toggle'),
-    Function('light_blue', 'Blue light', '/lights/blue', '/lights/blue/toggle'),
+    Function('light_red', 'Traffic red', '/rover/lights/traffic_red', '/rover/lights/traffic_red/toggle'),
+    Function('light_green', 'Traffic green', '/rover/lights/traffic_green', '/rover/lights/traffic_green/toggle'),
+    Function('light_blue', 'Traffic blue', '/rover/lights/traffic_blue', '/rover/lights/traffic_blue/toggle'),
     # Rover power over the emergency radio, served by lora_gateway_node inside
     # the /gs namespace - these are ground-station services, not rover ones.
     #

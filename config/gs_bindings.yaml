@@ -7,7 +7,6 @@
       false}, {"function": "light_red", "source": "switches", "index": 13, "invert":
       false}, {"function": "light_green", "source": "switches", "index": 17, "invert":
       false}, {"function": "light_blue", "source": "switches", "index": 22, "invert":
-      false}, {"function": "rover_power_on", "source": "switches", "index": 21, "invert":
       false}]'
     camera_switches:
     - 5

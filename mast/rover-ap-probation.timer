@@ -1,0 +1,7 @@
+[Unit]
+Description=Rover AP probation check after boot
+[Timer]
+OnBootSec=300
+AccuracySec=5s
+[Install]
+WantedBy=timers.target

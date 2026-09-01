@@ -61,7 +61,7 @@ def generate_launch_description():
     # happened. Turn it on once that firmware lands.
     use_estop_board_arg = DeclareLaunchArgument(
         'use_estop_board',
-        default_value='false',
+        default_value='true',
         description='Open the e-stop board; false makes the power services refuse'
     )
 
@@ -86,7 +86,7 @@ def generate_launch_description():
             }],
         ),
 
-        # Acts on the decision. Relays /cmd_vel_gs over the radio while the
+        # Acts on the decision. Relays /rover/cmd_vel_gs over the radio while the
         # path is LORA, and republishes the radio's own metrics. Also owns the
         # separate emergency radio: power/set_power and power/reboot_jetson.
         Node(
