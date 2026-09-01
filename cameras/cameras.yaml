@@ -44,6 +44,15 @@ cameras:
     fps: 15
     quality: 50
 
+  # YUYV:
+  # 1920x1200 @50/30/15fps
+  # 960x600 @80/60/30/15fps
+  arducam-backup:
+    device: /dev/arducam-backup
+    res: 960x600
+    fps: 15
+    quality: 50
+
   # MJPG:
   # 1920x1080 @30fps
   # 640x480 @30fps
