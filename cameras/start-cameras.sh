@@ -26,10 +26,20 @@
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$REPO/cameras/utils.sh"
 
 # ================================================================ defaults ==
 
-JETSON_SSH=${JETSON_SSH:-indomitus-rover@10.42.0.1}
+# Same names/defaults as enter_container.sh's `rover` command, so the two
+# scripts can be pointed at the rover the same way.
+JETSON_USER=${JETSON_USER:-indomitus-rover}
+JETSON_HOTSPOT_IP=${JETSON_HOTSPOT_IP:-10.42.0.1}
+JETSON_ETHERNET_IP=${JETSON_ETHERNET_IP:-indomitus-rover-computer.local}
+USE_ETH=${USE_ETH:-false}
+WIFI_SSID=${WIFI_SSID:-ERC_UCUSpaceRobotics_A}
+WIFI_PASS=${WIFI_PASS:-19283746}
+JETSON_IP=${JETSON_IP:-}         # empty = $JETSON_HOTSPOT_IP, or $JETSON_ETHERNET_IP with --eth
+JETSON_SSH=${JETSON_SSH:-}       # empty = derived from --user/--ip/--eth below; set to override outright
 # First camera's port; each further camera takes the next one up. NOT 8080:
 # web_video_server owns that on the GS.
 FIRST_PORT=${FIRST_PORT:-8090}
@@ -63,7 +73,15 @@ DEFAULT_QUALITY=${DEFAULT_QUALITY:-80}   # JPEG quality; the camera gives no MJP
 # Arducam's only option; a different camera model (thermal, spectral, stereo)
 # may need a different one — set per camera in --config.
 DEFAULT_FORMAT=${DEFAULT_FORMAT:-YUYV}
-SERVER_REMOTE_PATH=${SERVER_REMOTE_PATH:-}       # where the server lands; empty = remote $HOME
+# Dedicated remote directory (relative to $HOME) holding camera_mjpeg_server.py
+# and, if present, a venv at .camera-venv with cv2+numpy — see CAM_VENV_PY below.
+CAM_REMOTE_DIR=${CAM_REMOTE_DIR:-cameras}
+SERVER_REMOTE_PATH=${SERVER_REMOTE_PATH:-}       # where the server lands; empty = remote $HOME/$CAM_REMOTE_DIR
+# Preferred runtime: a venv on the host with cv2+numpy already installed
+# (JetPack ships neither, and the rover has no route to fetch them, so this
+# has to be built offline and copied on — see cameras/README.md). Checked
+# before bare host python3, which is checked before the container fallback.
+CAM_VENV_PY=${CAM_VENV_PY:-$CAM_REMOTE_DIR/.camera-venv/bin/python3}   # relative to remote $HOME
 
 DRY=0
 MODE=start
@@ -79,7 +97,14 @@ See the header of this file for why this camera is not a ROS topic.
   ./cameras/start-cameras.sh --dry
 
 Options
-  --ssh U@H       rover's Jetson, over the link  (default: $JETSON_SSH)
+  --eth           use wired Ethernet ($JETSON_ETHERNET_IP) instead of the hotspot
+  --user U        Jetson SSH username             (default: $JETSON_USER)
+  --ip IP         Jetson IP/host, overrides --eth's default
+                                          (default: $JETSON_HOTSPOT_IP, or $JETSON_ETHERNET_IP with --eth)
+  --ssid SSID     Wi-Fi SSID of the Jetson hotspot (default: $WIFI_SSID)
+  --pass PASS     Wi-Fi password for the hotspot   (default: $WIFI_PASS)
+  --ssh U@H       rover's Jetson as user@host, overrides --user/--ip entirely
+                                          (default: derived from --user/--ip/--eth)
   --port N        HTTP port of the FIRST camera; the rest take N+1, N+2 …
                                           (default: $FIRST_PORT)
   --config FILE   name -> udev symlink camera list (default: $CONFIG)
@@ -110,6 +135,11 @@ EOF
 
 while [ $# -gt 0 ]; do
     case "$1" in
+        --eth)     USE_ETH=true; shift ;;
+        --user)    JETSON_USER=$2; shift 2 ;;
+        --ip)      JETSON_IP=$2; shift 2 ;;
+        --ssid)    WIFI_SSID=$2; shift 2 ;;
+        --pass)    WIFI_PASS=$2; shift 2 ;;
         --ssh)     JETSON_SSH=$2; shift 2 ;;
         --port)    FIRST_PORT=$2; shift 2 ;;
         --config)  CONFIG=$2; shift 2 ;;
@@ -125,6 +155,9 @@ while [ $# -gt 0 ]; do
         *) echo "unknown option: $1 (try --help)"; exit 1 ;;
     esac
 done
+
+[ -n "$JETSON_IP" ] || { [ "$USE_ETH" = true ] && JETSON_IP=$JETSON_ETHERNET_IP || JETSON_IP=$JETSON_HOTSPOT_IP; }
+[ -n "$JETSON_SSH" ] || JETSON_SSH="${JETSON_USER}@${JETSON_IP}"
 
 SERVER_SRC="$REPO/cameras/camera_mjpeg_server.py"
 
@@ -152,13 +185,14 @@ nexec() {
 head_ "Jetson at $JETSON_SSH"
 if [ "$DRY" = 1 ]; then
     say "dry run — nothing will be touched"
-elif ! $SSH "$JETSON_SSH" true 2>/dev/null; then
-    die "cannot ssh to $JETSON_SSH (ssh-copy-id $JETSON_SSH, or set --ssh)"
 else
+    ensure_wifi_connection "$WIFI_SSID" "$WIFI_PASS" "$USE_ETH"
+    # exits (not returns) on timeout, e.g. no ssh-copy-id done yet — see utils.sh
+    wait_for_ssh "$JETSON_SSH" 30 "$USE_ETH"
     ok "$( $SSH "$JETSON_SSH" '. /etc/os-release; echo "$PRETTY_NAME $(uname -r)"' 2>/dev/null )"
-    [ -n "$SERVER_REMOTE_PATH" ] || SERVER_REMOTE_PATH=$($SSH "$JETSON_SSH" 'echo $HOME' 2>/dev/null)/camera_mjpeg_server.py
+    [ -n "$SERVER_REMOTE_PATH" ] || SERVER_REMOTE_PATH=$($SSH "$JETSON_SSH" 'echo $HOME' 2>/dev/null)/$CAM_REMOTE_DIR/camera_mjpeg_server.py
 fi
-[ -n "$SERVER_REMOTE_PATH" ] || SERVER_REMOTE_PATH='$HOME/camera_mjpeg_server.py'   # --dry, no remote to ask
+[ -n "$SERVER_REMOTE_PATH" ] || SERVER_REMOTE_PATH="\$HOME/$CAM_REMOTE_DIR/camera_mjpeg_server.py"   # --dry, no remote to ask
 
 # ================================================================== stop ==
 
@@ -429,28 +463,43 @@ EOF
 # camera_mjpeg_server.py runs on the OpenCV and numpy that ship with JetPack.
 
 head_ "Server"
-# Where python3 has cv2. Host first; the container is the fallback, not the
-# preference, because a container restart takes the streams with it.
+# Preference order: host venv (built offline, cv2+numpy copied on since
+# JetPack ships neither and the rover has no route to fetch them — see
+# cameras/README.md) > bare host python3 > the rover_prod container. Host-
+# native beats the container either way, because a container restart takes
+# the streams with it.
 CAM_RUNTIME=host
 CAM_PY="python3 $SERVER_REMOTE_PATH"
 if [ "$DRY" != 1 ]; then
-    if $SSH "$JETSON_SSH" 'python3 -c "import cv2, numpy"' 2>/dev/null; then
-        ok "host python3 has cv2 + numpy, nothing to install"
-        scp -q -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
-            "$SERVER_SRC" "$JETSON_SSH:$SERVER_REMOTE_PATH" || die "scp of camera_mjpeg_server.py failed"
+    $SSH "$JETSON_SSH" "mkdir -p \$HOME/$CAM_REMOTE_DIR" 2>/dev/null
+    scp -q -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+        "$SERVER_SRC" "$JETSON_SSH:$SERVER_REMOTE_PATH" || die "scp of camera_mjpeg_server.py failed"
+
+    # Errors are captured, not thrown away, so a failing venv/import shows
+    # its real reason (missing .so, wrong path, ...) instead of a bare "no cv2".
+    VENV_ERR=$($SSH "$JETSON_SSH" "test -x \$HOME/$CAM_VENV_PY || echo 'not found or not executable: \$HOME/$CAM_VENV_PY'; \$HOME/$CAM_VENV_PY -c 'import cv2, numpy' 2>&1" 2>&1)
+    if [ -z "$VENV_ERR" ]; then
+        ok "host venv ($CAM_VENV_PY) has cv2 + numpy"
+        CAM_PY="\$HOME/$CAM_VENV_PY $SERVER_REMOTE_PATH"
         did "deployed $SERVER_REMOTE_PATH"
-    elif $SSH "$JETSON_SSH" "docker exec $CAM_CONTAINER python3 -c 'import cv2, numpy'" 2>/dev/null; then
-        CAM_RUNTIME=container
-        CAM_PY="docker exec -d $CAM_CONTAINER python3 $CAM_CREMOTE"
-        warn "host python3 has no cv2 - falling back to the $CAM_CONTAINER container"
-        say  "  (JetPack 6 ships no cv2 binding and the rover has no route to an apt archive)"
-        scp -q -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
-            "$SERVER_SRC" "$JETSON_SSH:$SERVER_REMOTE_PATH" || die "scp of camera_mjpeg_server.py failed"
-        $SSH "$JETSON_SSH" "docker cp $SERVER_REMOTE_PATH $CAM_CONTAINER:$CAM_CREMOTE" >/dev/null 2>&1 \
-            || die "docker cp of camera_mjpeg_server.py into $CAM_CONTAINER failed"
-        did "deployed $CAM_CONTAINER:$CAM_CREMOTE (via $SERVER_REMOTE_PATH)"
     else
-        die "no python3 with cv2+numpy on the host or in $CAM_CONTAINER"
+        warn "host venv ($CAM_VENV_PY) rejected:"
+        printf '%s\n' "$VENV_ERR" | sed 's/^/       /'
+        HOST_ERR=$($SSH "$JETSON_SSH" 'python3 -c "import cv2, numpy"' 2>&1)
+        if [ -z "$HOST_ERR" ]; then
+            ok "host python3 has cv2 + numpy, nothing to install"
+            did "deployed $SERVER_REMOTE_PATH"
+        elif $SSH "$JETSON_SSH" "docker exec $CAM_CONTAINER python3 -c 'import cv2, numpy'" 2>/dev/null; then
+            CAM_RUNTIME=container
+            CAM_PY="docker exec -d $CAM_CONTAINER python3 $CAM_CREMOTE"
+            warn "no cv2 in bare host python3 either - falling back to the $CAM_CONTAINER container"
+            say  "     $HOST_ERR"
+            $SSH "$JETSON_SSH" "docker cp $SERVER_REMOTE_PATH $CAM_CONTAINER:$CAM_CREMOTE" >/dev/null 2>&1 \
+                || die "docker cp of camera_mjpeg_server.py into $CAM_CONTAINER failed"
+            did "deployed $CAM_CONTAINER:$CAM_CREMOTE (via $SERVER_REMOTE_PATH)"
+        else
+            die "no python3 with cv2+numpy in the host venv, bare host python3, or $CAM_CONTAINER"
+        fi
     fi
 else
     say "would copy $SERVER_SRC -> $JETSON_SSH:$SERVER_REMOTE_PATH"

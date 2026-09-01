@@ -47,3 +47,31 @@ unsupported value silently snaps to whatever the fallback logic in
 For why the defaults favor small/slow modes on this board (USB 3.0
 SuperSpeed instability, CPU budget for the JPEG encode), see
 [`../mast/README.md`](../mast/README.md).
+
+## Running `camera_mjpeg_server.py` on the Jetson host, without a venv fallback
+
+JetPack ships no `cv2` for host `python3`, and the rover has no route to
+`apt`/`pip`, so `start-cameras.sh` falls back to running inside the
+`rover_prod` container — working, but a container restart takes the streams
+with it. To avoid that, build a venv with `cv2`+`numpy` **offline** and copy
+it onto the rover; `start-cameras.sh` picks it up automatically and prefers
+it over both the container and bare host `python3`.
+
+```
+# on a machine with internet (NOT the rover) — match the Jetson's arch/python:
+pip download opencv-python-headless numpy \
+    --platform manylinux2014_aarch64 --python-version 310 \
+    --only-binary=:all: -d /tmp/cv-wheels
+
+# transfer and install fully offline, on the rover:
+scp -r /tmp/cv-wheels indomitus-rover@10.42.0.1:/tmp/
+ssh indomitus-rover@10.42.0.1
+mkdir -p ~/cameras && python3 -m venv ~/cameras/.camera-venv
+~/cameras/.camera-venv/bin/pip install --no-index --find-links=/tmp/cv-wheels opencv-python-headless numpy
+~/cameras/.camera-venv/bin/python3 -c "import cv2, numpy"   # no error = done
+```
+
+The venv must live at `<remote $HOME>/cameras/.camera-venv` — `CAM_REMOTE_DIR`
+and `CAM_VENV_PY` in `start-cameras.sh` control this path if you need it
+elsewhere. `opencv-python-headless` rather than the full package: this script
+never touches a display, so the Qt/GTK dependencies aren't needed.
