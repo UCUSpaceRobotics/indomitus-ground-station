@@ -1,16 +1,16 @@
 #!/bin/bash
 # Serve the rover's Arducam(s) as plain MJPEG over HTTP, no ROS.
 #
-#     ./mast/start-cameras.sh               # probe, deploy, start, verify
-#     ./mast/start-cameras.sh --probe       # only report what the camera offers
-#     ./mast/start-cameras.sh --stop
-#     ./mast/start-cameras.sh --dry
+#     ./cameras/start-cameras.sh               # probe, deploy, start, verify
+#     ./cameras/start-cameras.sh --probe       # only report what the camera offers
+#     ./cameras/start-cameras.sh --stop
+#     ./cameras/start-cameras.sh --dry
 #
 # Every other camera on this project publishes over ROS 2 (v4l2/gscam node ->
 # Fast DDS -> web_video_server on the GS). This camera bypasses that: its host
 # has no working cv2 for a ROS node to relay through, but the Arducam B0495 is
 # a driverless UVC device the stock uvcvideo handles fine, so
-# mast/camera_mjpeg_server.py captures it directly and serves MJPEG over HTTP,
+# cameras/camera_mjpeg_server.py captures it directly and serves MJPEG over HTTP,
 # and a UI camera tile points straight at that URL. The trade: this feed is
 # outside ROS — no rosbag recording, no per-frame timestamps, and the UI's
 # `ros` transport mode cannot carry it (see isDirectUrl() in ui/src/config.js).
@@ -18,7 +18,7 @@
 # Point a camera tile at the URL this prints: open the UI settings dialog and
 # type it into the "Image topic / URL" box of any row.
 #
-# Which cameras get served, and by what name, comes from mast/cameras.yaml
+# Which cameras get served, and by what name, comes from cameras/cameras.yaml
 # (see that file) — it maps each camera's deterministic udev symlink to a
 # name, which then appears in its stream URL and log file. With no config
 # (or an empty one) every /dev/video* node is auto-discovered instead, named
@@ -35,10 +35,10 @@ JETSON_SSH=${JETSON_SSH:-indomitus-rover@10.42.0.1}
 FIRST_PORT=${FIRST_PORT:-8090}
 DEV_FILTER=${DEV_FILTER:-}             # empty = serve every configured/found camera
 # Concrete camera list: name -> udev symlink (+ optional per-camera res/fps/
-# quality). See mast/cameras.yaml for the format. If its `cameras:` map is
+# quality). See cameras/cameras.yaml for the format. If its `cameras:` map is
 # empty or missing, every /dev/video* node is auto-discovered instead (the
 # old behaviour).
-CONFIG=${CONFIG:-$REPO/mast/cameras.yaml}
+CONFIG=${CONFIG:-$REPO/cameras/cameras.yaml}
 # Fallback runtime when the host python3 has no cv2 (see the note by CAM_RUNTIME below).
 CAM_CONTAINER=${CAM_CONTAINER:-rover_prod}
 CAM_CREMOTE=${CAM_CREMOTE:-/tmp/camera_mjpeg_server.py}
@@ -73,17 +73,17 @@ usage() {
 Serve the rover's Arducam(s) as MJPEG over HTTP, bypassing ROS. Idempotent.
 See the header of this file for why this camera is not a ROS topic.
 
-  ./mast/start-cameras.sh            # probe, deploy, start, verify
-  ./mast/start-cameras.sh --probe    # report formats/resolutions, change nothing
-  ./mast/start-cameras.sh --stop
-  ./mast/start-cameras.sh --dry
+  ./cameras/start-cameras.sh            # probe, deploy, start, verify
+  ./cameras/start-cameras.sh --probe    # report formats/resolutions, change nothing
+  ./cameras/start-cameras.sh --stop
+  ./cameras/start-cameras.sh --dry
 
 Options
   --ssh U@H       rover's Jetson, over the link  (default: $JETSON_SSH)
   --port N        HTTP port of the FIRST camera; the rest take N+1, N+2 …
                                           (default: $FIRST_PORT)
   --config FILE   name -> udev symlink camera list (default: $CONFIG)
-                  See mast/cameras.yaml for the format. Missing file or empty
+                  See cameras/cameras.yaml for the format. Missing file or empty
                   \`cameras:\` falls back to auto-discovering every /dev/video*.
   --dev LIST      comma-separated camera names or devices to serve
                   ('' = every configured/found camera) (default: ${DEV_FILTER:-all})
@@ -100,7 +100,7 @@ Options
   --probe | --stop | --dry
   -h, --help
 
-Needs nothing installed: mast/camera_mjpeg_server.py runs on host python3 if it
+Needs nothing installed: cameras/camera_mjpeg_server.py runs on host python3 if it
 has OpenCV, else inside the rover_prod container, which does. No apt, no build.
 
 Environment: every default above as an env var of the same name. Flags win.
@@ -126,7 +126,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-SERVER_SRC="$REPO/mast/camera_mjpeg_server.py"
+SERVER_SRC="$REPO/cameras/camera_mjpeg_server.py"
 
 say()   { printf '  %s\n' "$*"; }
 head_() { printf '\n\033[1m%s\033[0m\n' "$1"; }
@@ -347,7 +347,7 @@ if [ "$DRY" != 1 ]; then
             say "  1. re-cable: a USB 2.0 cable, or a socket with no external hub"
             say "  2. install the udev rule that deauthorises the SuperSpeed"
             say "     instance so the camera re-trains at 480M, then replug it:"
-            say "       scp mast/99-arducam-no-superspeed.rules $JETSON_SSH:/tmp/"
+            say "       scp cameras/99-arducam-no-superspeed.rules $JETSON_SSH:/tmp/"
             say "       ssh $JETSON_SSH sudo cp /tmp/99-arducam-no-superspeed.rules /etc/udev/rules.d/"
             say "       ssh $JETSON_SSH sudo udevadm control --reload"
         fi

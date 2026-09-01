@@ -99,7 +99,7 @@ no ROS topic, no `web_video_server` in the path.
 
 This is for a camera on a machine that cannot run Humble. The Jetson Nano at
 `10.42.0.1` is the case in hand: JetPack 4.5.1, so Ubuntu 18.04 and no
-`v4l2_camera_node` to publish with. `mast/start-cameras.sh` serves each of its
+`v4l2_camera_node` to publish with. `cameras/start-cameras.sh` serves each of its
 Arducams as MJPEG — port 8090 for the first, 8091 for the second, and so on —
 and prints the URLs, one per camera row.
 

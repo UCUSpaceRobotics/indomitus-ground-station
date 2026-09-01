@@ -424,12 +424,12 @@ no binaries for 18.04**, so nothing in this section applies to it: no
 difference from the Orin NX, where the arducams were ordinary ROS topics.
 
 The cameras are **Arducam B0495 (USB3 2.3MP)**, driverless UVC, so `uvcvideo`
-handles them. `mast/start-cameras.sh` deploys `mast/camera_mjpeg_server.py` and
+handles them. `cameras/start-cameras.sh` deploys `cameras/camera_mjpeg_server.py` and
 starts **one server process per camera** — first on **port 8090**, each further
 one on the next port up. Not 8080: `web_video_server` owns that on the GS. A UI
 camera row takes each URL directly; see "Cameras outside ROS" in `ui/README.md`.
 
-Which cameras get served, and by what name, comes from `mast/cameras.yaml`: it
+Which cameras get served, and by what name, comes from `cameras/cameras.yaml`: it
 maps each camera's deterministic udev symlink to a short name, which then
 appears in its stream URL (`http://<jetson>:<port>/<name>?action=stream`) and
 its log file, so a URL or log line identifies the physical camera without
@@ -527,7 +527,7 @@ failing silently.
 > `start-cameras.sh` requires one real captured frame from a node before it will
 > serve it, rather than trusting enumeration.
 
-> **Enforcing USB 2.0: `mast/99-arducam-no-superspeed.rules`.** Deauthorising a
+> **Enforcing USB 2.0: `cameras/99-arducam-no-superspeed.rules`.** Deauthorising a
 > camera's SuperSpeed instance (`echo 0 > .../authorized`) removes its node
 > cleanly, leaves the 480M feeds untouched and does not disturb the link —
 > unlike unbinding the hub tree, which drops the Wi-Fi with it. The udev rule

@@ -1,4 +1,4 @@
-# mast/cameras.yaml — the list of cameras this rover carries.
+# mast/cameras/cameras.yaml — the list of cameras this rover carries.
 #
 # Maps a camera name (used in its stream URL and log file to its udev symlink.
 # Check a camera's real modes/formats with `ssh <jetson> v4l2-ctl -d <device> --list-formats-ext`.

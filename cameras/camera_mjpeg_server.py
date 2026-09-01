@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Serve a V4L2 camera as MJPEG over HTTP. Runs on the rover's Jetson.
 
-See the header of mast/start-cameras.sh for why this exists instead of ROS.
+See the header of cameras/start-cameras.sh for why this exists instead of ROS.
 
 URL paths deliberately match mjpg-streamer's, because the UI derives the
 snapshot URL from the stream URL by swapping action=stream for action=snapshot
