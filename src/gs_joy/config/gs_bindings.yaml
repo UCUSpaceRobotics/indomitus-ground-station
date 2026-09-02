@@ -37,7 +37,10 @@
 #
 # A wrong index is a switch that silently drives the wrong thing, so check the
 # labels against the panel before a run.
-gs_interpreter:
+# `/**`, not `gs_interpreter`: this node runs as /gs/gs_interpreter and
+# rclpy matches a params file against the fully qualified name, so the
+# bare key silently matched nothing after the /gs migration.
+/**:
   ros__parameters:
     # Bits 8+ on purpose: DEFAULT_CAMERAS in the UI claims 0-7 for feed
     # selection, and a bit cannot do both.

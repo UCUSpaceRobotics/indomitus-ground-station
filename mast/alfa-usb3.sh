@@ -16,7 +16,7 @@
 # once the GS has actually reconnected. This mirrors rover-ap-apply.sh.
 #
 # WHAT COMES BACK ON ITS OWN. The AP here is NetworkManager, not hostapd: the
-# connection is `Hotspot` (mode=ap, ssid IndomitusRover, autoconnect=yes) and
+# connection is `Hotspot` (mode=ap, ssid ERC_UCUSpaceRobotics_A, autoconnect=yes) and
 # the 10.44.0.0/24 return route is a static route ON that connection, so both
 # return when NM re-activates it. That is why this reloads the module rather
 # than rebooting — the recovery path is shorter and observable.
@@ -28,7 +28,7 @@
 # failure and roll back.
 set -uo pipefail
 
-NANO_SSH=${NANO_SSH:-jetson@10.42.0.1}
+NANO_SSH=${NANO_SSH:-indomitus-rover@10.42.0.1}
 NANO_HOST=${NANO_HOST:-${NANO_SSH#*@}}
 # How long the Nano waits before reverting itself. Long enough for the adapter
 # to re-enumerate, NM to re-activate the AP and the GS to reconnect and run
@@ -156,7 +156,7 @@ head_ "Arming the rollback FIRST"
 # It reverts unless --keep has dropped the flag file. $KEEP lives in /run, so a
 # reboot clears it and a rebooted-but-broken rover still gets reverted.
 nexec "$SUDO rm -f $KEEP
-       $SUDO sh -c 'cat > /usr/local/sbin/alfa-usb3-rollback' <<'ROLLBACK'
+       cat > /tmp/alfa-usb3-rollback <<'ROLLBACK'
 #!/bin/sh
 sleep \$1
 [ -e $KEEP ] && exit 0
@@ -166,8 +166,9 @@ modprobe -r $MODULE; sleep 2; modprobe $MODULE; sleep 3
 nmcli con up $NM_CONN >/dev/null 2>&1
 logger -t alfa-usb3 'rolled back to USB 2.0 (no --keep within timeout)'
 ROLLBACK
+       $SUDO cp /tmp/alfa-usb3-rollback /usr/local/sbin/alfa-usb3-rollback
        $SUDO chmod +x /usr/local/sbin/alfa-usb3-rollback
-       $SUDO setsid nohup /usr/local/sbin/alfa-usb3-rollback $ROLLBACK_SECS >/dev/null 2>&1 < /dev/null &
+       $SUDO setsid nohup /usr/local/sbin/alfa-usb3-rollback $ROLLBACK_SECS >/dev/null 2>&1 &
        sleep 1; true"
 [ "$DRY" = 1 ] || did "rollback armed (${ROLLBACK_SECS}s)"
 
@@ -186,7 +187,7 @@ say "the adapter re-enumerates; NM re-activates '$NM_CONN' and its static route"
 # Detached: this command kills its own transport, so it must not be waited on.
 nexec "$SUDO setsid nohup sh -c 'nmcli con down $NM_CONN >/dev/null 2>&1
        modprobe -r $MODULE; sleep 3; modprobe $MODULE; sleep 5
-       nmcli con up $NM_CONN >/dev/null 2>&1' >/dev/null 2>&1 < /dev/null &
+       nmcli con up $NM_CONN >/dev/null 2>&1' >/dev/null 2>&1 &
        sleep 1; true"
 
 if [ "$DRY" = 1 ]; then say "would now wait for the link"; exit 0; fi

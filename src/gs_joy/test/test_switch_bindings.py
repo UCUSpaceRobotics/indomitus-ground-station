@@ -24,8 +24,8 @@ from gs_joy.switch_bindings import (
 )
 
 
-POWER = Binding('drive_power', SOURCE_SWITCHES, 0, '/drive/power')
-LIGHT = Binding('spotlight', SOURCE_SWITCHES, 2, '/lights/spotlight')
+POWER = Binding('drive_power', SOURCE_SWITCHES, 0, '/rover/drive/power')
+LIGHT = Binding('spotlight', SOURCE_SWITCHES, 2, '/rover/lights/spotlight')
 
 
 def tracker(*bindings):
@@ -90,7 +90,7 @@ def test_the_joystick_board_and_the_button_board_keep_separate_baselines():
     # The 9 switches on the joystick board arrive inside Joy.buttons; the 23 on
     # the button board arrive on /switches. Sharing a baseline between them
     # would make every message from one look like a change on the other.
-    mode = Binding('mode', SOURCE_JOY, 1, '/drive/compact')
+    mode = Binding('mode', SOURCE_JOY, 1, '/rover/drive/compact')
     t = tracker(POWER, mode)
 
     t.update(SOURCE_SWITCHES, [0, 0, 0])
@@ -128,7 +128,7 @@ def test_forgetting_a_source_makes_the_next_sample_a_baseline_again():
 def test_a_binding_past_the_end_of_the_frame_is_skipped_not_crashed():
     # A config typo, or a board reporting fewer switches than expected, must
     # not take the console's control path down.
-    t = tracker(Binding('typo', SOURCE_SWITCHES, 40, '/drive/power'))
+    t = tracker(Binding('typo', SOURCE_SWITCHES, 40, '/rover/drive/power'))
     t.update(SOURCE_SWITCHES, [0, 0, 0])
 
     assert t.update(SOURCE_SWITCHES, [1, 1, 1]) == []
@@ -137,7 +137,7 @@ def test_a_binding_past_the_end_of_the_frame_is_skipped_not_crashed():
 # ── inverted wiring ──────────────────────────────────────────────────────────
 
 def test_an_inverted_switch_sends_the_opposite_of_its_bit():
-    inverted = Binding('power', SOURCE_SWITCHES, 0, '/drive/power', invert=True)
+    inverted = Binding('power', SOURCE_SWITCHES, 0, '/rover/drive/power', invert=True)
     t = tracker(inverted)
     t.update(SOURCE_SWITCHES, [0])
 
@@ -148,10 +148,10 @@ def test_an_inverted_switch_sends_the_opposite_of_its_bit():
 
 def test_a_valid_spec_builds():
     bindings = build_bindings({
-        'drive_power': {'source': 'switches', 'index': 0, 'service': '/drive/power'},
+        'drive_power': {'source': 'switches', 'index': 0, 'service': '/rover/drive/power'},
     })
 
-    assert bindings == [Binding('drive_power', SOURCE_SWITCHES, 0, '/drive/power')]
+    assert bindings == [Binding('drive_power', SOURCE_SWITCHES, 0, '/rover/drive/power')]
 
 
 def test_switches_is_the_default_source():
@@ -177,7 +177,7 @@ def test_a_bad_spec_is_rejected_and_names_the_binding(spec, wrong):
 def test_a_latching_switch_gets_the_absolute_service():
     binds = binds_from_specs([
         {'function': 'drive_power', 'source': SOURCE_SWITCHES, 'index': 0}])
-    assert binds[0].service == '/drive/power'
+    assert binds[0].service == '/rover/drive/power'
     assert binds[0].kind == KIND_SETBOOL
 
 
@@ -185,7 +185,7 @@ def test_a_momentary_button_gets_the_toggle_twin():
     # A button has no position to send, so SetBool would undo it on release.
     binds = binds_from_specs([
         {'function': 'drive_power', 'source': SOURCE_JOY, 'index': 3}])
-    assert binds[0].service == '/drive/power/toggle'
+    assert binds[0].service == '/rover/drive/power/toggle'
     assert binds[0].kind == KIND_TRIGGER
 
 
@@ -194,7 +194,7 @@ def test_a_function_with_no_absolute_form_is_edge_fired_from_either_source():
     for source in (SOURCE_JOY, SOURCE_SWITCHES):
         binds = binds_from_specs([
             {'function': 'drive_clear_errors', 'source': source, 'index': 1}])
-        assert binds[0].service == '/drive/clear_errors'
+        assert binds[0].service == '/rover/drive/clear_errors'
         assert binds[0].kind == KIND_TRIGGER
 
 
@@ -279,11 +279,11 @@ def test_each_board_is_bindable_to_its_last_control():
 
 
 @pytest.mark.parametrize('function, service', [
-    ('spotlight', '/lights/spotlight'),
-    ('beautiful', '/lights/beautiful'),
-    ('light_red', '/lights/red'),
-    ('light_green', '/lights/green'),
-    ('light_blue', '/lights/blue'),
+    ('spotlight', '/rover/lights/spotlight'),
+    ('beautiful', '/rover/lights/beautiful'),
+    ('light_red', '/rover/lights/traffic_red'),
+    ('light_green', '/rover/lights/traffic_green'),
+    ('light_blue', '/rover/lights/traffic_blue'),
 ])
 def test_every_light_offers_both_forms(function, service):
     """A latching panel switch sends its position; the toggle twin is there
@@ -304,18 +304,25 @@ def test_no_function_offers_a_service_the_rover_does_not():
     """Every service either side of resolve() must be one that exists.
 
     Kept as an explicit list rather than a rule, because the only way to know
-    is to go and read what the rover advertises: rover_teleop/drive_power_node
-    for the drive_*, rover_peripherals/rover_lighting_node for the lights.
+    is to go and read what the server advertises: rover_teleop/drive_power_node
+    for the drive_*, rover_peripherals/rover_lighting_node for the lights, and
+    gs_comms/lora_gateway_node - on this side of the radio, not the rover's -
+    for the three under /gs/power.
     """
     advertised = {
-        '/drive/power', '/drive/power/toggle',
-        '/drive/compact', '/drive/compact/toggle',
-        '/drive/clear_errors',
-        '/lights/spotlight', '/lights/spotlight/toggle',
-        '/lights/beautiful', '/lights/beautiful/toggle',
-        '/lights/red', '/lights/red/toggle',
-        '/lights/green', '/lights/green/toggle',
-        '/lights/blue', '/lights/blue/toggle',
+        '/rover/drive/power', '/rover/drive/power/toggle',
+        '/rover/drive/compact', '/rover/drive/compact/toggle',
+        '/rover/drive/clear_errors',
+        '/rover/lights/spotlight', '/rover/lights/spotlight/toggle',
+        '/rover/lights/beautiful', '/rover/lights/beautiful/toggle',
+        '/rover/lights/traffic_red', '/rover/lights/traffic_red/toggle',
+        '/rover/lights/traffic_green', '/rover/lights/traffic_green/toggle',
+        '/rover/lights/traffic_blue', '/rover/lights/traffic_blue/toggle',
+        # Served by the ground station itself, which is why they carry the
+        # /gs prefix the rover's own services do not.
+        '/gs/power/turn_on',
+        '/gs/power/turn_off',
+        '/gs/power/reboot_jetson',
     }
     for function in FUNCTIONS:
         for source in (SOURCE_SWITCHES, SOURCE_JOY):

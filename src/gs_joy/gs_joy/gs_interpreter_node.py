@@ -34,12 +34,15 @@ Calls, per switch_bindings.FUNCTIONS:
 
 import json
 import os
+import shutil
+import traceback
 
 import rclpy
 import yaml
 from rcl_interfaces.msg import SetParametersResult
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from sensor_msgs.msg import Joy
 from std_msgs.msg import Int32MultiArray
 from std_srvs.srv import SetBool, Trigger
@@ -56,7 +59,18 @@ from gs_joy.switch_bindings import (
 
 #: Top-level key in bindings_file, matching the ros2 param-file layout so
 #: `ros2 param load` also works on it.
-NODE_KEY = 'gs_interpreter'
+#:
+#: The wildcard, not the node name. rclpy matches a params file against a
+#: node's FULLY QUALIFIED name, and this node runs as /gs/gs_interpreter, so a
+#: file keyed `gs_interpreter:` matched nothing once the console moved into
+#: the /gs namespace: every bind arrived empty and the whole panel went dead
+#: with only a "nothing wired (startup)" warning to show for it. `/**` matches
+#: whatever namespace it is launched under.
+NODE_KEY = '/**'
+
+#: Keys a bindings_file may already be under, oldest last. A file written
+#: before the /gs migration carries the bare node name.
+LEGACY_NODE_KEYS = (NODE_KEY, '/gs/gs_interpreter', 'gs_interpreter')
 
 
 class GsInterpreterNode(Node):
@@ -102,8 +116,58 @@ class GsInterpreterNode(Node):
             values = self.get_parameter('camera_switches').value
         return [(SOURCE_SWITCHES, int(i)) for i in values if i >= 0]
 
+    def _saved_binds(self):
+        """The set `save_bindings` last wrote, or '' when there is not one.
+
+        Nothing read this file back before, despite bindings_file being
+        documented as where startup restores from: it was written and never
+        looked at again, so every restart silently reverted the console to the
+        shipped defaults and the operator had to re-Apply from the dialog.
+        """
+        path = self.bindings_file
+        if not path or not os.path.exists(path):
+            return ''
+
+        try:
+            with open(path) as handle:
+                document = yaml.safe_load(handle) or {}
+        except (OSError, yaml.YAMLError) as exc:
+            self.get_logger().error(
+                f'cannot read {path}: {exc} - falling back to the defaults')
+            return ''
+
+        params = {}
+        for key in LEGACY_NODE_KEYS:
+            section = document.get(key)
+            if isinstance(section, dict) and 'ros__parameters' in section:
+                params = section['ros__parameters'] or {}
+                break
+        if not params:
+            return ''
+
+        # The camera claims travel with the binds: they are what the binds are
+        # validated against, so restoring one without the other would accept a
+        # bit that the saved camera list had already spoken for.
+        cameras = params.get('camera_switches')
+        if cameras:
+            self.set_parameters([Parameter(
+                'camera_switches', Parameter.Type.INTEGER_ARRAY,
+                [int(i) for i in cameras])])
+
+        return params.get('binds', '') or ''
+
     def _initial_bindings(self):
-        """Prefer the runtime set; fall back to the launch-time tree."""
+        """Prefer what was saved, then the runtime set, then the launch tree."""
+        raw = self._saved_binds()
+        if raw:
+            try:
+                bindings = self._parse(raw)
+                self.get_logger().info(f'restored binds from {self.bindings_file}')
+                return bindings
+            except ValueError as exc:
+                self.get_logger().error(
+                    f'bad binds in {self.bindings_file}: {exc} - falling back')
+
         raw = self.get_parameter('binds').value
         if raw:
             try:
@@ -147,6 +211,12 @@ class GsInterpreterNode(Node):
         self._bindings = list(bindings)
         self._tracker = EdgeTracker(self._bindings)
 
+        # Destroyed, not just dropped: the Node keeps its own list of
+        # clients and the executor keeps them in its wait set, so replacing
+        # the dict alone leaves every previous Apply's clients behind for as
+        # long as the node runs.
+        for client in self._service_clients.values():
+            self.destroy_client(client)
         self._service_clients = {}
         self._call_pending = {}
         for binding in self._bindings:
@@ -208,6 +278,20 @@ class GsInterpreterNode(Node):
             directory = os.path.dirname(path)
             if directory:
                 os.makedirs(directory, exist_ok=True)
+
+            # Keep the previous file. Saving an empty set is a legitimate
+            # gesture - it unwires the console on purpose - but it is also
+            # what happens when the node came up wired to nothing and something
+            # pressed Apply, and that combination silently overwrote a working
+            # console's whole configuration with `binds: '[]'`. The write still
+            # goes through; there is just something left to put back.
+            if os.path.exists(path):
+                shutil.copy2(path, f'{path}.bak')
+            if not self._bindings:
+                self.get_logger().warn(
+                    f'saving an EMPTY bind set to {path}; '
+                    f'the previous file is at {path}.bak')
+
             payload = {NODE_KEY: {'ros__parameters': {
                 'binds': json.dumps(specs_from_binds(self._bindings)),
                 # -1, not an empty list: rclpy cannot infer the type of an
@@ -230,10 +314,25 @@ class GsInterpreterNode(Node):
     # ── panel ────────────────────────────────────────────────────────────────
 
     def _on_joy(self, msg: Joy):
-        self._apply(self._tracker.update(SOURCE_JOY, msg.buttons))
+        self._guarded(SOURCE_JOY, msg.buttons)
 
     def _on_switches(self, msg: Int32MultiArray):
-        self._apply(self._tracker.update(SOURCE_SWITCHES, msg.data))
+        self._guarded(SOURCE_SWITCHES, msg.data)
+
+    def _guarded(self, source, values):
+        """Run one frame, and survive it going wrong.
+
+        An exception raised in a subscription callback propagates through
+        spin() and takes the process with it, which is how a single
+        unloggable message left the console with no switches at all until
+        someone noticed the node was gone. One frame is not worth that: log
+        it with a traceback and take the next one.
+        """
+        try:
+            self._apply(self._tracker.update(source, values))
+        except Exception:
+            self.get_logger().error(
+                f'{source} frame dropped:\n{traceback.format_exc()}')
 
     def _apply(self, changes):
         for binding, desired in changes:
@@ -270,15 +369,31 @@ class GsInterpreterNode(Node):
             lambda future: self._on_result(future, binding, label))
 
     def _on_result(self, future, binding, label: str):
-        self._call_pending[binding.service] = False
+        # .pop, not [..] = False: a rebind between the call and its reply
+        # swaps both dicts, and the service this reply belongs to may no
+        # longer be wired. Indexing a dict that no longer has the key raises
+        # inside a done-callback, which is fatal the same way the severity
+        # switch below was.
+        if binding.service in self._call_pending:
+            self._call_pending[binding.service] = False
         try:
             result = future.result()
         except Exception as exc:
             self.get_logger().error(f'{binding.name} -> {label} failed: {exc!r}')
             return
 
-        level = self.get_logger().info if result.success else self.get_logger().warn
-        level(f'{binding.name} -> {label}: {result.message}')
+        # Two call sites rather than one logger picked into a variable.
+        # rcutils_logger keys its state by caller location, so a single source
+        # line may only ever log at one severity: once a successful press had
+        # logged INFO here, the first refusal that came back - the gateway's
+        # one-shot rate guard answers success=False - raised
+        # "Logger severity cannot be changed between calls" out of this
+        # done-callback and through spin(), killing the console outright.
+        message = f'{binding.name} -> {label}: {result.message}'
+        if result.success:
+            self.get_logger().info(message)
+        else:
+            self.get_logger().warn(message)
 
 
 def main(args=None):

@@ -192,7 +192,7 @@ ros2 run gs_joy joy_to_servo_node
 `joy_to_cmd_vel_node` turns `/joy` into `geometry_msgs/Twist`. It is a swerve
 rover, so `linear.y` is real — it can strafe sideways.
 
-**Publish to `/cmd_vel_gs`, not `/cmd_vel`.** On the rover `/cmd_vel` is the
+**Publish to `/rover/cmd_vel_gs`, not `/rover/cmd_vel`.** On the rover `/rover/cmd_vel` is the
 *output* of `twist_mux`, which arbitrates three inputs (`rover_bringup/config/twist_mux.yaml`):
 
 | Input          | Priority | Source                        |

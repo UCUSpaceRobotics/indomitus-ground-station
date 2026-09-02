@@ -37,7 +37,7 @@ set -uo pipefail
 
 # ================================================================ defaults ==
 
-NANO_SSH=${NANO_SSH:-jetson@10.42.0.1}
+NANO_SSH=${NANO_SSH:-indomitus-rover@10.42.0.1}
 # First camera's port; each further camera takes the next one up. NOT 8080:
 # web_video_server owns that on the GS.
 NANO_PORT=${NANO_PORT:-8090}

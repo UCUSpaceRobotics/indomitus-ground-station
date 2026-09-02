@@ -28,7 +28,7 @@ export const VIDEO_MODES = {
 
 /**
  * The Jetson Nano's cameras are NOT ROS topics — it runs Ubuntu 18.04, where
- * Humble has no binaries, so there is no v4l2_camera_node. mast/nano-camera.sh
+ * Humble has no binaries, so there is no v4l2_camera_node. cameras/start-cameras.sh
  * serves each one over plain HTTP instead, one port per camera counting up from
  * 8090. A camera row holding an absolute URL is read straight by the browser;
  * see isDirectUrl() below and "Cameras outside ROS" in README.md.
@@ -98,9 +98,14 @@ export function placeholderFor(camera) {
 /**
  * Topics the panels read. Overridable so the UI can follow a remapped rover.
  *
- * switches/joy/joyRaw live under the gs_bringup /gs namespace. armJoy,
- * cmdVel and servoTwist are deliberately absolute — they're where the gs
- * nodes hand off to the rover/arm side, so they stay outside /gs on both ends.
+ * switches/joy/joyRaw live under the gs_bringup /gs namespace.
+ *
+ * Everything the rover publishes sits under /rover — rover.launch.py wraps its
+ * whole group in PushRosNamespace(ROVER_NAMESPACE), default 'rover'. If that
+ * env var is ever changed on the rover, these have to follow it.
+ *
+ * armJoy and servoTwist stay absolute: the arm is explicitly excluded from the
+ * rover namespace, so it is still reached un-prefixed.
  */
 export const DEFAULT_TOPICS = {
   switches: '/gs/switches',
@@ -109,12 +114,12 @@ export const DEFAULT_TOPICS = {
   joyRaw: '/gs/joy/raw',
   /** The console dressed as an SDL gamepad, which is what the arm reads. */
   armJoy: '/arm/joy',
-  cmdVel: '/cmd_vel',
+  cmdVel: '/rover/cmd_vel',
   servoTwist: '/servo_node/delta_twist_cmds',
-  odom: '/odom',
-  battery: '/battery_state',
-  imu: '/imu/data',
-  gps: '/gps/fix',
+  odom: '/rover/odom',
+  battery: '/rover/battery_state',
+  imu: '/rover/imu/data',
+  gps: '/rover/gps/fix',
   rosout: '/rosout',
 };
 
@@ -147,7 +152,7 @@ function defaults() {
     armNode: '/gs/arm_gamepad',
     /** Node that turns console switches into rover service calls. */
     interpreterNode: '/gs/gs_interpreter',
-    /** Node that turns the sticks into /cmd_vel_gs, for the steering mode. */
+    /** Node that turns the sticks into /rover/cmd_vel_gs, for the steering mode. */
     driveNode: '/gs/joy_to_cmd_vel_node',
     /**
      * Console control -> rover function. The node is authoritative once these
@@ -249,8 +254,66 @@ function normalizeCameras(cameras) {
 
 const LEGACY_JOY_NODES = ['/serial_joy_node', '/switch_reader_node'];
 
+/**
+ * Node names that moved under the /gs namespace, same refactor as
+ * LEGACY_TOPICS below.
+ *
+ * This one bites harder than the topic version, because a wrong node name
+ * breaks *writing* rather than reading: the settings dialog calls
+ * `${interpreterNode}/set_parameters`, and against a stale `/gs_interpreter`
+ * rosbridge answers "Service /gs_interpreter/set_parameters does not exist" —
+ * so Apply fails and no bind can be saved at all.
+ */
+const LEGACY_NODES = {
+  '/gs_interpreter': '/gs/gs_interpreter',
+  '/console_boards': '/gs/console_boards',
+  '/arm_gamepad': '/gs/arm_gamepad',
+  '/joy_to_cmd_vel_node': '/gs/joy_to_cmd_vel_node',
+};
+
+function migrateNode(name, fallback) {
+  return LEGACY_NODES[name] ?? name;
+}
+
 function migrateJoyNode(name, fallback) {
-  return LEGACY_JOY_NODES.includes(name) ? fallback : name;
+  // Two migrations stack here: serial_joy_node and switch_reader_node were
+  // merged into one node, and then that node moved into /gs.
+  if (LEGACY_JOY_NODES.includes(name)) return fallback;
+  return migrateNode(name, fallback);
+}
+
+/**
+ * Console-board topics that moved under the /gs namespace when gs_bringup
+ * started pushing one.
+ *
+ * Saved topics override DEFAULT_TOPICS, so a console that stored its settings
+ * before that refactor keeps subscribing to the old absolute names. Nothing
+ * publishes them any more, and the failure is silent in the worst way:
+ * rosbridge connects, the header says "Connected", and every stick and switch
+ * panel just stays empty with no error anywhere. Keyed by setting, so a value
+ * that only *looks* legacy under some other key is left alone.
+ */
+const LEGACY_TOPICS = {
+  switches: { '/switches': '/gs/switches' },
+  joy: { '/joy': '/gs/joy' },
+  joyRaw: { '/joy/raw': '/gs/joy/raw' },
+  // The same story one namespace over: rover.launch.py pushed every rover node
+  // and topic under /rover, so a console that saved its topics before that is
+  // still subscribing to names nothing publishes.
+  cmdVel: { '/cmd_vel': '/rover/cmd_vel' },
+  odom: { '/odom': '/rover/odom' },
+  battery: { '/battery_state': '/rover/battery_state' },
+  imu: { '/imu/data': '/rover/imu/data' },
+  gps: { '/gps/fix': '/rover/gps/fix' },
+};
+
+function migrateTopics(saved) {
+  const out = { ...DEFAULT_TOPICS };
+  for (const [key, value] of Object.entries(saved || {})) {
+    if (typeof value !== 'string' || !value) continue;
+    out[key] = LEGACY_TOPICS[key]?.[value] ?? value;
+  }
+  return out;
 }
 
 function normalize(raw) {
@@ -265,15 +328,19 @@ function normalize(raw) {
     videoWidth: Math.max(0, Number(merged.videoWidth) || 0),
     theme: merged.theme === 'light' ? 'light' : 'dark',
     cameras: normalizeCameras(merged.cameras),
-    topics: { ...DEFAULT_TOPICS, ...(merged.topics || {}) },
+    topics: migrateTopics(merged.topics),
     // serial_joy_node and switch_reader_node were merged into one node. A
     // console that saved its settings before that has the old name in
     // localStorage, and pointing the wizard at a node that no longer exists
     // fails as "calibration did not save" with nothing in the log.
     joyNode: migrateJoyNode(String(merged.joyNode || base.joyNode).replace(/\/+$/, ''), base.joyNode),
-    armNode: String(merged.armNode || base.armNode).replace(/\/+$/, ''),
-    interpreterNode: String(merged.interpreterNode || base.interpreterNode).replace(/\/+$/, ''),
-    driveNode: String(merged.driveNode || base.driveNode).replace(/\/+$/, ''),
+    armNode: migrateNode(
+      String(merged.armNode || base.armNode).replace(/\/+$/, ''), base.armNode),
+    interpreterNode: migrateNode(
+      String(merged.interpreterNode || base.interpreterNode).replace(/\/+$/, ''),
+      base.interpreterNode),
+    driveNode: migrateNode(
+      String(merged.driveNode || base.driveNode).replace(/\/+$/, ''), base.driveNode),
     functionBinds: normalizeBinds(merged.functionBinds),
     driveModeBind: normalizeModeBind(merged.driveModeBind),
     twistMode: merged.twistMode === 'curvature' ? 'curvature' : 'row',

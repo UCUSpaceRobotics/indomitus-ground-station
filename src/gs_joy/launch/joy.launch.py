@@ -134,7 +134,7 @@ def generate_launch_description():
                 # /cmd_vel is twist_mux's OUTPUT on the rover. External sources
                 # feed an input: cmd_vel_gs (priority 10), so the onboard
                 # gamepad on cmd_vel_joy (priority 100) always wins.
-                ('cmd_vel', '/cmd_vel_gs'),
+                ('cmd_vel', '/rover/cmd_vel_gs'),
             ],
             output='screen'
         ),
@@ -197,6 +197,10 @@ def generate_launch_description():
             parameters=[gs_bindings, {
                 'bindings_file': LaunchConfiguration('gs_bindings_file'),
             }],
-            output='screen'
+            # 'both', not 'screen': when this node died the Python traceback
+            # went only to whichever terminal held the launch, and the log
+            # directory kept just "process has died, exit code 1". The reason
+            # the console stopped working needs to outlive that terminal.
+            output='both'
         )
     ])

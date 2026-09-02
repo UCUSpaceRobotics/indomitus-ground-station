@@ -27,9 +27,11 @@
 # eth0 keeps IPv6 link-local: that is the out-of-band recovery path
 # (ssh admin@fe80::8aa2:9eff:fec6:5546%<gs-iface>) if the IPv4 config is wrong.
 #
-# NOTE: the SSID below is the pre-competition one. ERC requires
+# NOTE: the SSID below is the competition one, changed 2026-08-31 from the
+# pre-competition "IndomitusRover"/"12345678". ERC requires
 # "ERC_<TeamName>_(A/B)" - team name is UCU Space Robotics, not Indomitus,
-# which is the rover - so expect to change access-points: here.
+# which is the rover. The rover AP already broadcasts _A; _B is the spare
+# slot, so if the judges move the team to it, change access-points: here.
 #
 # No band or channel appears in this file and none should. netplan matches on
 # SSID alone, so the client follows the AP wherever it moves; the rover's AP is
@@ -53,5 +55,5 @@ network:
       addresses: [10.42.0.2/24]
       optional: true
       access-points:
-        "IndomitusRover":
-          password: "12345678"
+        "ERC_UCUSpaceRobotics_A":
+          password: "19283746"

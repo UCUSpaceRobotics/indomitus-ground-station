@@ -98,7 +98,7 @@ def generate_launch_description():
                     # Camera frames over rosbridge are large; the stock 10 MB cap
                     # is what a full-resolution CompressedImage burst needs.
                     'max_message_size': 10000000,
-                    # The UI calls /drive/* and /lights/* while streaming video.
+                    # The UI calls /rover/drive/* and /rover/lights/* while streaming video.
                     # On the single-threaded default a service the rover is slow to
                     # answer stalls every subscription with it.
                     'call_services_in_new_thread': True,
