@@ -1,0 +1,125 @@
+# mast/cameras/cameras.yaml — the list of cameras this rover carries.
+#
+# Maps a camera name (used in its stream URL and log file to its udev symlink.
+# Check a camera's real modes/formats with `ssh <jetson> v4l2-ctl -d <device> --list-formats-ext`.
+#
+# Empty/missing `cameras:` falls back to auto-discovering every /dev/video*.
+
+cameras:
+  # YUYV:
+  # 2560x720 @60/30/15fps
+  # 1344x376 @100/60/30/15fps
+  # 3840x1080 @30/15fps
+  # 4416x1242 @15fps
+  # Every mode above is two eyes side by side in one frame (width = 2x a
+  # single eye's width, e.g. 1344x376 is two 672x376 images) — the camera has
+  # no single-eye UVC mode. `view` picks which half start-cameras.sh serves,
+  # cropped in software (see split_stereo() in camera_mjpeg_server.py):
+  #   left | right   one eye, cropped from the joined frame
+  #   both           the raw joined frame, uncropped (default if omitted)
+  zed2i-stereo-camera-front:
+    device: /dev/zed2i-stereo-camera
+    res: 1344x376
+    fps: 15
+    quality: 60
+    view: left
+
+  # YUYV:
+  # 1920x1200 @50/30/15fps
+  # 960x600 @80/60/30/15fps
+  arducam-mast:
+    device: /dev/arducam-mast
+    res: 960x600
+    fps: 15
+    quality: 70
+
+  # YUYV:
+  # 1920x1200 @50/30/15fps
+  # 960x600 @80/60/30/15fps
+  arducam-front:
+    device: /dev/arducam-front
+    res: 960x600
+    fps: 15
+    quality: 50
+
+  # YUYV:
+  # 1920x1200 @50/30/15fps
+  # 960x600 @80/60/30/15fps
+  arducam-rear:
+    device: /dev/arducam-rear
+    res: 960x600
+    fps: 15
+    quality: 50
+
+  # YUYV:
+  # 1920x1200 @50/30/15fps
+  # 960x600 @80/60/30/15fps
+  arducam-backup:
+    device: /dev/arducam-backup
+    res: 960x600
+    fps: 15
+    quality: 50
+
+  # MJPG:
+  # 1920x1080 @30fps
+  # 640x480 @30fps
+  # 800x600 @30fps
+  # 1024x768 @30fps
+  # 1280x720 @30fps
+  # 1600x1200 @30fps
+  # 2048x1536 @30fps
+  # 2592x1944 @30fps
+  # YUYV:
+  # 1920x1080 @5fps
+  # 640x480 @30fps
+  # 800x600 @10fps
+  # 1024x768 @10fps
+  # 1280x720 @10fps
+  # 1600x1200 @5fps
+  # 2048x1536 @1fps
+  # 2592x1944 @1fps
+  arm-camera:
+    device: /dev/arm-camera
+    res: 640x480
+    fps: 30
+    quality: 60
+    format: MJPG
+
+  # H264:
+  # 1920x1440 @30fps
+  # 1280x720 @30fps
+  # 640x480 @30fps
+  # 320x240 @30fps
+  # MJPG:
+  # 1920x1440 @30fps
+  # 1280x720 @30fps
+  # 640x480 @30fps
+  # 320x240 @30fps
+  spectral-camera-front:
+    device: /dev/spectral-camera
+    res: 640x480
+    fps: 30
+    quality: 60
+    format: MJPG
+
+  # YUYV:
+  # 720x576 @25/20/10/5fps
+  # 720x480 @30/20/10/5fps
+  # 640x480 @30/20/10/5fps
+  # 480x320 @30/20/10/5fps
+  # 320x240 @30/20/10/5fps
+  # MJPG:
+  # 1920x1080 @30/25/10/5fps
+  # 1280x720 @60/50/30/10fps
+  # 800x600 @60/50/30/10fps
+  # 720x576 @60/50/30/10fps
+  # 720x480 @60/50/30/10fps
+  # 640x480 @60/50/30/10fps
+  # 480x320 @60/50/30/10fps
+  # 320x240 @60/50/30/10fps
+  thermal-camera-front:
+    device: /dev/thermal-camera
+    res: 480x320
+    fps: 10
+    quality: 50
+    format: MJPG

@@ -1,36 +1,16 @@
 #!/usr/bin/env python3
-"""Serve a V4L2 camera as MJPEG over HTTP. Runs on the Jetson Nano.
+"""Serve a V4L2 camera as MJPEG over HTTP. Runs on the rover's Jetson.
 
-WHY THIS EXISTS instead of mjpg-streamer, and instead of ROS.
+See the header of cameras/start-cameras.sh for why this exists instead of ROS.
 
-Not ROS: this Nano is JetPack 4.5.1 — Ubuntu 18.04, kernel 4.9.201-tegra. ROS 2
-Humble has no binaries for 18.04, so there is no v4l2_camera_node to publish
-with. See the header of mast/nano-camera.sh for the full reasoning.
+Capture is viewer-counted: the camera stays closed and idle until a stream
+connects, and closes again once the last one disconnects, so a camera nobody
+is watching costs no USB bandwidth or CPU (ui/src/lib/frameMirror.js shows
+each camera's last frame in the UI's thumbnail strip without opening a
+connection at all).
 
-Not mjpg-streamer: it builds cleanly here but segfaults inside input_uvc before
-it opens the device, on a camera that offers exactly one mode. Debugging a
-third-party C plugin on an EOL platform is not the shortest path to video, and
-the usual reason to prefer it — relaying MJPEG frames untouched — does not apply
-to this camera anyway. The Arducam B0495 on this box offers only YUYV, so
-something has to encode regardless. OpenCV 4.1.1 and numpy ship with JetPack, so
-this needs nothing installed.
-
-Cost: 960x600 at 10 fps is ~5.8 MPix/s of JPEG encode, a fraction of one A57
-core. That headroom is the whole reason this is affordable — it would not be at
-1080p30, and if the camera is ever moved to a real USB 3.0 port (it is currently
-on a 480M path, which is why it offers one mode) this should be re-measured.
-
-Each frame is encoded ONCE and handed to every connected client, so a second
-viewer costs bandwidth but no extra CPU. Capture runs in its own thread and
-never blocks on a slow client: clients are always served the newest frame, and a
-viewer that cannot keep up drops frames rather than stalling the camera.
-
-URL paths deliberately match mjpg-streamer's, because the UI derives the
-snapshot URL from the stream URL by swapping action=stream for action=snapshot
-(see snapshotUrl() in ui/src/config.js):
-
-    /?action=stream     multipart/x-mixed-replace, the camera tiles
-    /?action=snapshot   one JPEG, the thumbnail strip
+    /?action=stream     multipart/x-mixed-replace, opens/keeps the camera live
+    /?action=snapshot   one JPEG from whatever is currently captured, if any
     /health             plain text, for scripts
 """
 
@@ -45,16 +25,13 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 
 import cv2
+import numpy as np
 
-BOUNDARY = 'nanomjpegframe'
+BOUNDARY = 'cameramjpegframe'
 
 
 def enumerate_modes(device):
-    """{(w, h): [fps, ...]} the device actually offers, via v4l2-ctl.
-
-    OpenCV will accept any width/height/fps you hand it and then quietly give
-    you something else, so ask V4L2 directly instead of trusting the setters.
-    """
+    """{(w, h): [fps, ...]} the device actually offers, via v4l2-ctl."""
     try:
         out = subprocess.check_output(
             ['v4l2-ctl', '-d', device, '--list-formats-ext'],
@@ -79,14 +56,7 @@ def enumerate_modes(device):
 
 
 def pick_mode(modes, want_w, want_h, want_fps):
-    """Snap a request onto a mode the camera has. Returns (w, h, fps, note).
-
-    This matters because the same camera offers different modes at different
-    USB speeds: on a 480M path the B0495 gives 960x600 at 10 fps and nothing
-    else, while on a 5000M path it gives 15/30/60/80 and no 10 at all. A request
-    carried over from one to the other selects a rate that does not exist, and
-    the capture then fails in a way that looks like a broken camera.
-    """
+    """Snap a request onto a mode the camera has. Returns (w, h, fps, note)."""
     if not modes:
         return want_w, want_h, want_fps, 'unverified (no format list)'
 
@@ -94,8 +64,7 @@ def pick_mode(modes, want_w, want_h, want_fps):
     if (want_w, want_h) in modes:
         size = (want_w, want_h)
     else:
-        # Largest on offer: if the requested size is gone, the operator would
-        # rather have the best picture available than no picture.
+        # Requested size is gone: fall back to the largest one on offer.
         size = max(modes, key=lambda s: s[0] * s[1])
         notes.append('%dx%d not offered' % (want_w, want_h))
 
@@ -113,31 +82,61 @@ def pick_mode(modes, want_w, want_h, want_fps):
     return size[0], size[1], fps, '; '.join(notes) or 'exact'
 
 
-class Camera:
-    """Grabs frames in the background, holding only the newest JPEG.
-
-    Deliberately last-frame-wins rather than a queue: for a live view a backlog
-    is worse than a gap, and an unbounded queue on a 4GB board is a slow leak.
+def split_stereo(frame, view):
+    """Cut a side-by-side stereo frame (left|right eye, concatenated on the
+    width) down to one eye. ZED-style cameras report only the combined
+    resolution over UVC — there is no separate mode for a single eye, so this
+    always runs on the full frame, not something the camera can do itself.
     """
+    if view == 'both':
+        return frame
+    half = frame.shape[1] // 2
+    eye = frame[:, :half] if view == 'left' else frame[:, half:]
+    # The slice is a non-contiguous view (a row stride, not a copy); cv2.imencode
+    # needs contiguous memory, so make one copy of half the data here rather
+    # than let imencode do it implicitly (or fail) downstream.
+    return np.ascontiguousarray(eye)
 
-    def __init__(self, device, width, height, fps, quality):
+
+class Camera:
+    """Grabs frames in the background, holding only the newest JPEG."""
+
+    def __init__(self, device, width, height, fps, quality, fourcc='YUYV', name=None,
+                 view='both'):
         self.device = device
         self.width = width
         self.height = height
         self.fps = fps
         self.quality = int(quality)
+        self.fourcc = fourcc
+        self.name = name or device
+        self.view = view
 
         self._jpeg = None
         self._seq = 0
         self._cond = threading.Condition()
         self._stop = threading.Event()
-        self.mode = 'unopened'
+        self._viewers = 0
+        self.mode = 'idle'
         self.frames = 0
         self.errors = 0
         self.started = time.time()
 
+    @property
+    def viewers(self):
+        return self._viewers
+
+    def add_viewer(self):
+        with self._cond:
+            self._viewers += 1
+            self._cond.notify_all()
+
+    def remove_viewer(self):
+        with self._cond:
+            self._viewers = max(0, self._viewers - 1)
+            self._cond.notify_all()
+
     def open(self):
-        # Snap onto a real mode before touching OpenCV; see pick_mode().
         w, h, fps, note = pick_mode(enumerate_modes(self.device),
                                     self.width, self.height, self.fps)
         if note != 'exact':
@@ -149,32 +148,40 @@ class Camera:
         cap = cv2.VideoCapture(self.device, cv2.CAP_V4L2)
         if not cap.isOpened():
             raise RuntimeError('cannot open %s' % self.device)
-        # The B0495 offers YUYV only. Setting FOURCC explicitly stops OpenCV
-        # from negotiating something the camera will refuse.
-        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'YUYV'))
+        if len(self.fourcc) != 4:
+            raise RuntimeError('--format must be a 4-character FourCC, got %r' % self.fourcc)
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*self.fourcc))
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
         cap.set(cv2.CAP_PROP_FPS, self.fps)
-        # Report what we actually got, not what we asked for — a camera that
-        # silently substitutes a mode is otherwise invisible until the picture
-        # looks wrong.
+        # Report what the camera actually gave us, not what was asked for.
         got = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
                int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
                cap.get(cv2.CAP_PROP_FPS))
         self.mode = '%dx%d@%.0f' % got
-        print('camera open: %dx%d @ %.0f fps, jpeg q%d'
-              % (got[0], got[1], got[2], self.quality), flush=True)
+        note = ' (%s eye)' % self.view if self.view != 'both' else ''
+        print('%s: camera open: %dx%d @ %.0f fps, %s, jpeg q%d%s'
+              % (self.name, got[0], got[1], got[2], self.fourcc, self.quality, note), flush=True)
         return cap
 
     def run(self):
         cap = None
         while not self._stop.is_set():
+            # No viewers: stay closed and idle rather than capturing for
+            # nobody. Woken by add_viewer() or stop().
+            with self._cond:
+                while self._viewers == 0 and not self._stop.is_set():
+                    self._cond.wait()
+            if self._stop.is_set():
+                break
+
             try:
                 if cap is None:
                     cap = self.open()
                 ok, frame = cap.read()
                 if not ok:
                     raise RuntimeError('read failed')
+                frame = split_stereo(frame, self.view)
                 ok, buf = cv2.imencode(
                     '.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.quality])
                 if not ok:
@@ -185,15 +192,21 @@ class Camera:
                     self.frames += 1
                     self._cond.notify_all()
             except Exception as exc:            # noqa: BLE001 - keep serving
-                # A USB camera on a hub chain does drop out. Reopen rather than
-                # exit, so the feed comes back on its own instead of needing
-                # someone to ssh in.
+                # Reopen rather than exit, so a dropped camera recovers on its
+                # own instead of needing someone to ssh in and restart it.
                 self.errors += 1
-                print('capture error: %s (reopening)' % exc, file=sys.stderr, flush=True)
+                print('%s: capture error: %s (reopening)' % (self.name, exc),
+                      file=sys.stderr, flush=True)
                 if cap is not None:
                     cap.release()
                     cap = None
                 time.sleep(1.0)
+                continue
+
+            if self._viewers == 0 and cap is not None:
+                cap.release()
+                cap = None
+                self.mode = 'idle'
         if cap is not None:
             cap.release()
 
@@ -206,6 +219,8 @@ class Camera:
 
     def stop(self):
         self._stop.set()
+        with self._cond:
+            self._cond.notify_all()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -229,10 +244,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def _health(self):
+        # Doesn't call add_viewer(): a health check must not itself keep an
+        # otherwise-idle camera capturing.
         cam = self.camera
         up = time.time() - cam.started
-        body = ('ok mode=%s frames=%d errors=%d uptime=%.0fs fps=%.1f\n'
-                % (cam.mode, cam.frames, cam.errors, up,
+        body = ('ok name=%s mode=%s viewers=%d frames=%d errors=%d uptime=%.0fs fps=%.1f\n'
+                % (cam.name, cam.mode, cam.viewers, cam.frames, cam.errors, up,
                    cam.frames / up if up else 0)).encode()
         self.send_response(200)
         self.send_header('Content-Type', 'text/plain')
@@ -253,13 +270,15 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(jpeg)
 
     def _stream(self):
-        self.send_response(200)
-        self.send_header('Cache-Control', 'no-store')
-        self.send_header('Content-Type',
-                         'multipart/x-mixed-replace; boundary=' + BOUNDARY)
-        self.end_headers()
-        seq = -1
+        # The connection itself is the "someone is watching" signal.
+        self.camera.add_viewer()
         try:
+            self.send_response(200)
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Content-Type',
+                             'multipart/x-mixed-replace; boundary=' + BOUNDARY)
+            self.end_headers()
+            seq = -1
             while True:
                 jpeg, seq = self.camera.latest(seq)
                 if jpeg is None:
@@ -271,6 +290,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(b'\r\n')
         except (BrokenPipeError, ConnectionResetError):
             pass        # the operator closed a tile; not an error
+        finally:
+            self.camera.remove_viewer()
 
 
 class Server(socketserver.ThreadingMixIn, HTTPServer):
@@ -286,16 +307,26 @@ def main():
     ap.add_argument('--height', type=int, default=600)
     ap.add_argument('--fps', type=int, default=10)
     ap.add_argument('--quality', type=int, default=80, help='JPEG quality 1-100')
+    ap.add_argument('--format', default='YUYV',
+                     help='capture pixel format (FourCC), e.g. YUYV, MJPG, GREY')
     ap.add_argument('--port', type=int, default=8090)
     ap.add_argument('--bind', default='0.0.0.0')
+    ap.add_argument('--name', default=None,
+                     help='camera name, for logs and /health (default: --device)')
+    ap.add_argument('--view', default='both', choices=('left', 'right', 'both'),
+                     help='for a side-by-side stereo camera (e.g. ZED2i), which eye '
+                          'to serve; the camera itself has no such mode, so this '
+                          'crops the joined frame in software (default: both, unsplit)')
     args = ap.parse_args()
 
-    cam = Camera(args.device, args.width, args.height, args.fps, args.quality)
+    cam = Camera(args.device, args.width, args.height, args.fps, args.quality,
+                 fourcc=args.format, name=args.name, view=args.view)
     threading.Thread(target=cam.run, daemon=True).start()
 
     Handler.camera = cam
     server = Server((args.bind, args.port), Handler)
-    print('serving http://%s:%d/?action=stream' % (args.bind, args.port), flush=True)
+    print('%s: serving http://%s:%d/%s?action=stream'
+          % (cam.name, args.bind, args.port, args.name or ''), flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

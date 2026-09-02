@@ -88,8 +88,12 @@ opened somewhere else; a hard-coded `localhost` does not.
   from a live one. Costs noticeably more bandwidth; base64 over the websocket is
   roughly a third larger than the raw JPEG.
 
-In focus layout the thumbnail strip polls `/snapshot` at 0.5 Hz instead of
-opening a stream per camera; the grid layout streams every visible tile.
+In focus layout the thumbnail strip opens no connection of its own: each
+thumbnail shows the last frame `ui/src/lib/frameMirror.js` captured for that
+camera while it was live elsewhere (the main pane, or a grid tile), so an
+unfocused camera costs nothing on the rover — see the viewer-counted capture
+in `cameras/camera_mjpeg_server.py`. The grid layout streams every visible
+tile live.
 
 ### Cameras outside ROS
 
@@ -99,7 +103,7 @@ no ROS topic, no `web_video_server` in the path.
 
 This is for a camera on a machine that cannot run Humble. The Jetson Nano at
 `10.42.0.1` is the case in hand: JetPack 4.5.1, so Ubuntu 18.04 and no
-`v4l2_camera_node` to publish with. `mast/nano-camera.sh` serves each of its
+`v4l2_camera_node` to publish with. `cameras/start-cameras.sh` serves each of its
 Arducams as MJPEG — port 8090 for the first, 8091 for the second, and so on —
 and prints the URLs, one per camera row.
 
