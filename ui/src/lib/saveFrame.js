@@ -75,34 +75,3 @@ export async function saveFrameBlob(blob, cameraName, ext, { allowDownloadFallba
   downloadBlob(blob, filename);
   return { filename, viaFallback: true };
 }
-
-/**
- * Saves an MJPEG frame by fetching a single still snapshot from `snapshotUrl`
- * (see config.js's `snapshotUrl()`).
- *
- * This needs the camera server's snapshot response to carry
- * `Access-Control-Allow-Origin`, since the UI reads it from a different
- * origin (its own dev/preview port). `cameras/camera_mjpeg_server.py` (the
- * Nano cameras) sends it; a stock `web_video_server` does not, and there is
- * no client-side way around that — every trick that avoids asking the
- * server's permission (drawing the frame through a `<canvas>`, linking
- * straight to the cross-origin URL with `download`) either throws a
- * SecurityError when read back or gets treated as a plain navigation instead
- * of a download, which would replace this tab with the JPEG. Neither is
- * worth risking on a console someone may be driving from, so a blocked fetch
- * is reported as an error instead of attempting either.
- */
-export async function saveMjpegFrame(snapshotUrl, cameraName, opts = {}) {
-  let blob;
-  try {
-    const response = await fetch(snapshotUrl, { cache: 'no-store' });
-    if (!response.ok) throw new Error(`Camera server returned HTTP ${response.status}.`);
-    blob = await response.blob();
-  } catch {
-    throw new Error(
-      "Can't read this camera's frame to save it — its server does not allow this page to read " +
-        "it (missing CORS headers). Right-click the video and \"Save Image As\" still works.",
-    );
-  }
-  return saveFrameBlob(blob, cameraName, 'jpg', opts);
-}
