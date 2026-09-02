@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CameraOff, Image as ImageIcon, RefreshCw, Radio, RotateCw } from 'lucide-react';
-import { VIDEO_MODES, isDirectUrl, mjpegUrl, placeholderFor, useConfig } from '../config';
+import { CameraOff, Image as ImageIcon, RefreshCw, Radio, RotateCw, Save } from 'lucide-react';
+import { VIDEO_MODES, isDirectUrl, mjpegUrl, placeholderFor, snapshotUrl, useConfig } from '../config';
 import { useTopic, useTick, isStale } from '../ros/useTopic';
 import { fmtAge, fmtNumber, stampToMs } from '../lib/format';
 import { rotateCamera, useRotation } from '../lib/rotation';
 import { paintMirror, drawMirror, subscribeMirror } from '../lib/frameMirror';
+import { blobFromBase64, saveFrameBlob, saveMjpegFrame } from '../lib/saveFrame';
 
 const RETRY_BASE_MS = 1000;
 const RETRY_MAX_MS = 15_000;
@@ -123,6 +124,7 @@ export default function CameraFeed({ camera, variant = 'main', className = '' })
 
   const [httpStatus, setHttpStatus] = useState('connecting');
   const [reloadKey, setReloadKey] = useState(0);
+  const [saveToast, setSaveToast] = useState(null);
   const now = useTick(1000);
   // Shared across every pane showing this camera — thumbnail, main and the
   // fullscreen route rotate together.
@@ -133,6 +135,13 @@ export default function CameraFeed({ camera, variant = 'main', className = '' })
     setHttpStatus('connecting');
     setReloadKey((k) => k + 1);
   }, []);
+
+  // Auto-dismiss the "saved"/error pop after a few seconds.
+  useEffect(() => {
+    if (!saveToast) return undefined;
+    const timer = setTimeout(() => setSaveToast(null), 3000);
+    return () => clearTimeout(timer);
+  }, [saveToast]);
 
   // 33 ms, so a 30 fps publisher is not throttled down to 15 in the main pane.
   // rosbridge drops frames to honour this, and the drop happens *after* the
@@ -145,6 +154,47 @@ export default function CameraFeed({ camera, variant = 'main', className = '' })
     queueLength: 1,
     renderMs: 0,
   });
+
+  /**
+   * Deliberately not a canvas capture. The camera servers (web_video_server,
+   * the Nano's mjpg-streamer) are cross-origin from the UI and send no CORS
+   * headers, so drawing their frames onto a `<canvas>` taints it — reading it
+   * back with `toBlob()` throws a SecurityError ("the operation is
+   * insecure") in every browser, not just Firefox. The ROS transport hands
+   * the frame over as base64 directly, so it is decoded straight to a Blob;
+   * the MJPEG transport re-fetches one still frame instead — see
+   * lib/saveFrame.js for what happens when that fetch is itself blocked.
+   */
+  const handleSave = useCallback(
+    async (event) => {
+      // Grid tiles are themselves buttons (see CameraGrid); without this the
+      // click also bubbles up and switches the view to this camera.
+      event.stopPropagation();
+      const opts = { allowDownloadFallback: config.screenshotDownloadFallback };
+      try {
+        let result;
+        if (rosMode) {
+          if (!rosFeed.message?.data) throw new Error('No frame available yet.');
+          const mime = String(rosFeed.message.format || '').includes('png')
+            ? 'image/png'
+            : 'image/jpeg';
+          const ext = mime === 'image/png' ? 'png' : 'jpg';
+          result = await saveFrameBlob(blobFromBase64(rosFeed.message.data, mime), camera.name, ext, opts);
+        } else {
+          result = await saveMjpegFrame(snapshotUrl(config, camera.topic), camera.name, opts);
+        }
+        setSaveToast({
+          tone: 'ok',
+          text: result.viaFallback
+            ? `Downloaded ${result.filename} (folder saving unavailable — check your browser's downloads)`
+            : `Saved ${result.filename}`,
+        });
+      } catch (err) {
+        setSaveToast({ tone: 'crit', text: String(err.message || err) });
+      }
+    },
+    [rosMode, rosFeed.message, camera.name, camera.topic, config],
+  );
 
   const rosStale = isStale(rosFeed.receivedAt, now, Math.max(3000, frameIntervalMs * 5));
   let status = httpStatus;
@@ -236,22 +286,41 @@ export default function CameraFeed({ camera, variant = 'main', className = '' })
         </button>
       )}
 
+      {/* Top right: LIVE badge and the save-frame button share this corner.
+          Save only exists while there is an actual frame to save — no feed,
+          no button. In the focus pane it is always visible; on a grid tile it
+          only appears on hover (see .feed-tile .feed-save in index.css). */}
       {status === 'live' && !isThumb && (
-        <div className="feed-badge">
-          <Radio size={12} />
-          LIVE
-          {rosMode && rosFeed.hz > 0 && (
-            <span className="feed-badge-stat">{fmtNumber(rosFeed.hz, 1)} fps</span>
-          )}
-          {rosMode && frameAgeMs !== null && (
-            <span className="feed-badge-stat">{fmtAge(frameAgeMs)}</span>
-          )}
-          {rosMode && stampMs !== null && rosFeed.receivedAt > 0 && (
-            <span className="feed-badge-stat" title="Rover timestamp to browser arrival">
-              {fmtAge(rosFeed.receivedAt - stampMs)} link
-            </span>
-          )}
+        <div className="feed-topright">
+          <button
+            type="button"
+            className="btn btn-sm feed-save"
+            onClick={handleSave}
+            title={`Save frame from ${camera.name}`}
+            aria-label={`Save current frame from ${camera.name}`}
+          >
+            <Save size={13} />
+          </button>
+          <div className="feed-badge">
+            <Radio size={12} />
+            LIVE
+            {rosMode && rosFeed.hz > 0 && (
+              <span className="feed-badge-stat">{fmtNumber(rosFeed.hz, 1)} fps</span>
+            )}
+            {rosMode && frameAgeMs !== null && (
+              <span className="feed-badge-stat">{fmtAge(frameAgeMs)}</span>
+            )}
+            {rosMode && stampMs !== null && rosFeed.receivedAt > 0 && (
+              <span className="feed-badge-stat" title="Rover timestamp to browser arrival">
+                {fmtAge(rosFeed.receivedAt - stampMs)} link
+              </span>
+            )}
+          </div>
         </div>
+      )}
+
+      {saveToast && !isThumb && (
+        <div className={`feed-save-toast is-${saveToast.tone}`}>{saveToast.text}</div>
       )}
     </div>
   );
