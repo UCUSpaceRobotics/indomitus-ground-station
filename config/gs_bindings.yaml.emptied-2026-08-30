@@ -1,0 +1,5 @@
+gs_interpreter:
+  ros__parameters:
+    binds: '[]'
+    camera_switches:
+    - -1

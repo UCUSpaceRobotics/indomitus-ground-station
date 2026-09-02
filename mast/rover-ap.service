@@ -1,0 +1,36 @@
+# hostapd AP for the rover Alfa at 40 MHz. Replaces the NetworkManager
+# `Hotspot` profile, which NM 1.36 cannot widen past 20 MHz.
+#
+# ExecStartPre takes the interface away from NM at every boot rather than
+# relying on a persistent NM conf file — one less file to get wrong, and it
+# leaves the Hotspot profile intact with autoconnect=yes so the fallback below
+# can restore the link instantly.
+#
+# OnFailure is the whole safety story: this rover has NO wired lifeline
+# (10.45.0.51 does not answer), so if hostapd cannot start, something must put
+# the 20 MHz NM Hotspot back or the rover is unreachable until someone walks
+# to it.
+[Unit]
+Description=Rover AP (hostapd, 40 MHz)
+After=network.target NetworkManager.service
+Wants=NetworkManager.service
+OnFailure=rover-ap-fallback.service
+
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/nmcli dev set wlx00c0caba86c1 managed no
+ExecStartPre=-/usr/bin/nmcli con down Hotspot
+ExecStartPre=/bin/sleep 2
+ExecStartPre=-/sbin/ip addr flush dev wlx00c0caba86c1
+ExecStartPre=/sbin/ip addr add 10.42.0.1/24 dev wlx00c0caba86c1
+ExecStartPre=/sbin/ip link set wlx00c0caba86c1 up
+ExecStart=/usr/sbin/hostapd /etc/hostapd/rover-ap.conf
+ExecStartPost=-/sbin/ip route replace 10.44.0.0/24 via 10.42.0.2 dev wlx00c0caba86c1
+Restart=on-failure
+RestartSec=5
+# Give up rather than loop forever — repeated failure must reach OnFailure.
+StartLimitBurst=3
+StartLimitIntervalSec=120
+
+[Install]
+WantedBy=multi-user.target

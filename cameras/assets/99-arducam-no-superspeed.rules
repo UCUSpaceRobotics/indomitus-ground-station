@@ -1,0 +1,37 @@
+# Refuse SuperSpeed for the Arducam B0495 on the Jetson Nano.
+#
+# WHY. These cameras are not reliable at 5000M on this board. Behind external
+# hubs they produce flat green frames and flood dmesg with
+# `uvcvideo: Non-zero status (-71) in video completion handler`; even hub-free
+# and direct on the Nano, one logged 824 such errors in a single boot while
+# serving ~19 fps against a requested 30. At 480M the same cameras run for hours
+# with zero errors. See "The Nano's camera" in mast/README.md.
+#
+# WHAT THIS DOES. Deauthorises the SuperSpeed instance as it appears, which
+# removes its /dev/video* node. The USB 2.0 wires are present in every USB3-A
+# socket, so the camera is then free to come up at High Speed instead.
+#
+# WHAT IT IS PROVEN TO DO: remove the stale SuperSpeed twin that a wedged camera
+# leaves behind. That ghost is not cosmetic — it consumes a port in
+# nano-camera.sh and shifts every camera after it, which silently re-maps the
+# UI tiles.
+#
+# WHAT IS PROVEN NOT TO WORK, measured 2026-08-30: a camera whose ONLY
+# enumeration is SuperSpeed does not re-train at High Speed after being
+# deauthorised. It vanishes. A B0495 on 2-1.2.1, behind one external Realtek
+# hub and already failing the UVC probe control with -71, enumerated at 5000M,
+# was deauthorised by this rule, lost its node, and never came back at 480M on
+# either bus. So do NOT install this expecting it to rescue a wedged camera —
+# the link speed is set by the cable and the socket, and this kernel has no
+# per-port SuperSpeed disable. Use a USB 2.0 cable or a hub-free socket.
+#
+# Nothing here is destructive: `echo 1 > .../authorized` undoes it live, and
+# this rule is one file to delete.
+#
+# Install:  sudo cp 99-arducam-no-superspeed.rules /etc/udev/rules.d/
+#           sudo udevadm control --reload
+# Remove:   sudo rm /etc/udev/rules.d/99-arducam-no-superspeed.rules
+#
+# 04b4:4950 is the Cypress FX3 bridge the B0495 presents. ATTR{speed}=="5000"
+# is what confines this to SuperSpeed — the 480M instance is untouched.
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="04b4", ATTR{idProduct}=="4950", ATTR{speed}=="5000", ATTR{authorized}="0"

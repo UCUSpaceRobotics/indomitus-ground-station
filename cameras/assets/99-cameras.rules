@@ -1,0 +1,45 @@
+# Stable /dev names for the rover's cameras.
+#
+# Install:  sudo cp 99-cameras.rules /etc/udev/rules.d/
+#           sudo udevadm control --reload && sudo udevadm trigger
+#
+# Without these the cameras are /dev/video0..N in enumeration order, which is
+# whatever order they happen to train in on a given boot. cameras.yaml names
+# these symlinks, so this file is what keeps a camera's tile pointing at the
+# camera the operator thinks it is.
+#
+# WHY THE ARDUCAMS MATCH ON product, NOT serial. All three B0495s share
+# 04b4:4950 — the Cypress FX3 bridge — so vendor/product IDs cannot tell them
+# apart, and they were originally distinguished by ATTRS{serial}. That stopped
+# working once they were reprogrammed with per-unit iProduct strings:
+#
+#   front  ATTRS{product}=="Arducam_front"  ATTRS{serial}=="Arducam_202500915_0001_front"
+#   mast   ATTRS{product}=="Arducam_mast"   ATTRS{serial}=="Arducam_mast_9197"
+#   rear   ATTRS{product}=="Arducam_rear"   (no serial attribute at all)
+#
+# The serials are now three different schemes, and the rear unit has NO serial
+# on its device block — `udevadm info -a` there walks up and reports the host
+# controller's "3610000.usb", which is not the camera. So no serial rule can
+# ever match the rear camera, while product is present, distinct, and consistent
+# on all three. Verified on the rover 2026-08-31.
+#
+# idVendor, idProduct and product all sit on the SAME parent device (the USB
+# device node, two levels above the video4linux node), which is what lets one
+# rule combine them — udev requires every ATTRS{} in a rule to match on one
+# parent. ATTR{index}=="0" is on the video node itself and picks the capture
+# node of the pair each camera exposes; index 1 is its metadata node.
+#
+# If a camera is reprogrammed again, re-read the truth from the rover rather
+# than editing from memory:
+#   udevadm info -a -n /dev/videoN | grep -E 'ATTR\{index\}|ATTRS\{(idVendor|idProduct|product|serial)\}'
+
+SUBSYSTEM=="video4linux", ATTRS{idVendor}=="04b4", ATTRS{idProduct}=="4950", ATTRS{product}=="Arducam_front", ATTR{index}=="0", SYMLINK+="arducam-front"
+SUBSYSTEM=="video4linux", ATTRS{idVendor}=="04b4", ATTRS{idProduct}=="4950", ATTRS{product}=="Arducam_mast", ATTR{index}=="0", SYMLINK+="arducam-mast"
+SUBSYSTEM=="video4linux", ATTRS{idVendor}=="04b4", ATTRS{idProduct}=="4950", ATTRS{product}=="Arducam_rear", ATTR{index}=="0", SYMLINK+="arducam-rear"
+SUBSYSTEM=="video4linux", ATTRS{idVendor}=="04b4", ATTRS{idProduct}=="4950", ATTRS{product}=="Arducam_backup", ATTR{index}=="0", SYMLINK+="arducam-backup"
+
+# Single-unit cameras: vendor/product IDs are unique, so no further key needed.
+SUBSYSTEM=="video4linux", ATTRS{idVendor}=="0002", ATTRS{idProduct}=="afa1", ATTR{index}=="0", SYMLINK+="thermal-camera"
+SUBSYSTEM=="video4linux", ATTRS{idVendor}=="0603", ATTRS{idProduct}=="8612", ATTR{index}=="0", SYMLINK+="spectral-camera"
+SUBSYSTEM=="video4linux", ATTRS{idVendor}=="0ede", ATTRS{idProduct}=="8093", ATTR{index}=="0", SYMLINK+="arm-camera"
+SUBSYSTEM=="video4linux", ATTRS{idVendor}=="2b03", ATTRS{idProduct}=="f880", ATTR{index}=="0", SYMLINK+="zed2i-stereo-camera"

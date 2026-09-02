@@ -1,0 +1,37 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+
+# Local env overrides. `.env.example` is the tracked one; `.env.local` is not,
+# which is where machine-specific things like VITE_VIDEO_MODE belong.
+*.local
+.env.local
+.env.*.local
+
+# Build and tool caches. node_modules/.vite is already covered above, but a
+# vite.config.js with a custom cacheDir puts it here instead, and its contents
+# change on every dev-server start.
+.vite/
+*.tsbuildinfo
+coverage/
+.oxlintcache
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

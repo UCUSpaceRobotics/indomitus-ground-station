@@ -1,0 +1,98 @@
+# Operator mode: starts the whole console stack, nothing left to run by hand.
+#
+# --project-directory is not optional. Paths here are relative to the repo root,
+# and without it compose resolves them against docker/, mounting the wrong tree
+# at /work.
+#
+#   docker compose -f docker/docker-compose.gs.yaml --project-directory . up -d
+#
+# The root docker-compose.yml is the development counterpart: same image, same
+# environment, but it leaves you a shell instead of launching anything.
+
+services:
+  indomitus_ground_station:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        ROS_DISTRO: humble
+    image: indomitus-ground-station:humble
+    container_name: indomitus_ground_station
+    network_mode: host
+    # Host networking gets discovery across, not data: two Fast DDS participants
+    # on one host negotiate shared memory, and docker gives every container a
+    # private /dev/shm. Sharing the host IPC namespace puts both ends on the
+    # same one. Without this the GS container and a rover-core container on this
+    # same laptop discover each other and then exchange nothing.
+    ipc: host
+    privileged: true
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+
+    environment:
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-90}
+      - ROS_LOCALHOST_ONLY=0
+      # The profile is Fast DDS-specific. Naming the RMW explicitly stops a
+      # differently-configured host from silently loading Cyclone, where the
+      # profile is ignored and the rover simply never appears.
+      - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
+      # Whitelists the mast-link interface and sets static unicast peers, because
+      # multicast SPDP does not cross the mast Pi's routing. Also the guard that
+      # lets docker/entrypoint.bash regenerate the profile at each start — the
+      # path must match exactly or the regeneration is skipped.
+      - FASTRTPS_DEFAULT_PROFILES_FILE=/work/docker/fastdds_rover_link.xml
+      # Knobs for that regeneration (docker/gen-dds-profile.sh). The prefix is
+      # how it recognises the ethernet link to the mast Pi among the laptop's
+      # interfaces; the peer is the rover's address on the far side of it.
+      - ROVER_LINK_PREFIX=${ROVER_LINK_PREFIX:-10.44.0.}
+      - ROVER_PEER=${ROVER_PEER:-10.42.0.1}
+      - ROVER_PEER_RANGE=${ROVER_PEER_RANGE:-50}
+      # Extra local addresses for the DDS interface whitelist, on top of the
+      # rover link. Empty by default; set it to also carry ROS traffic on a
+      # segment the rover path does not reach (e.g. the campus LAN address).
+      - DDS_EXTRA_ADDRS=${DDS_EXTRA_ADDRS:-}
+
+      # --- console hardware --------------------------------------------------
+      - JOY_BOARD_PORT=${JOY_BOARD_PORT:-/dev/ttyACM0}
+      - BUTTON_BOARD_PORT=${BUTTON_BOARD_PORT:-/dev/ttyACM1}
+      # On /work, so a rebuilt container keeps the stick calibration.
+      - JOY_CALIBRATION_FILE=${JOY_CALIBRATION_FILE:-/work/config/joy_calibration.yaml}
+
+      # --- mast --------------------------------------------------------------
+      # Both mast services bind this address, not 0.0.0.0: link_monitor.py on
+      # 4002, lora_bridge.py on 4001.
+      - MAST_HOST=${MAST_HOST:-10.44.0.1}
+
+      # --- browser-facing servers --------------------------------------------
+      # ui/src/config.js derives ws://<host>:9090 and http://<host>:8080 from the
+      # host that served the page. Change one here and change it there too.
+      - ROSBRIDGE_PORT=${ROSBRIDGE_PORT:-9090}
+      - VIDEO_SERVER_PORT=${VIDEO_SERVER_PORT:-8080}
+
+    volumes:
+      - ./:/work:rw
+      - ./src:/opt/ws/src:rw
+      - /dev:/dev
+    group_add:
+      - dialout
+
+    # entrypoint.bash regenerates the DDS profile, builds the workspace if the
+    # sources moved, then execs this.
+    command: >
+      ros2 launch gs_bringup gs.launch.py
+      use_joy:=${GS_USE_JOY:-true}
+      use_comms:=${GS_USE_COMMS:-true}
+      use_rosbridge:=${GS_USE_ROSBRIDGE:-true}
+      use_video:=${GS_USE_VIDEO:-true}
+
+    # Health is "the browser can reach us", not "the process is alive": a
+    # rosbridge that died leaves the container up and the UI dark, which is
+    # exactly the failure this file exists to stop.
+    healthcheck:
+      test: ["CMD-SHELL", "ss -ltn 2>/dev/null | grep -q ':${ROSBRIDGE_PORT:-9090} '"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      # First start compiles the workspace, which is minutes, not seconds.
+      start_period: 300s

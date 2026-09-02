@@ -9,9 +9,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-colcon-common-extensions \
     python3-rosdep \
     python3-serial \
-    iputils-ping pkg-config \
+    iputils-ping iproute2 pkg-config \
     ros-${ROS_DISTRO}-ros2launch \
     ros-${ROS_DISTRO}-teleop-twist-joy \
+    ros-${ROS_DISTRO}-rosbridge-suite \
+    ros-${ROS_DISTRO}-web-video-server \
     usbutils \
     g++ make cmake \
     && rm -rf /var/lib/apt/lists/*

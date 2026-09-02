@@ -1,0 +1,19 @@
+# DHCP for AP clients. DNS is disabled (--port=0) so it cannot collide with
+# systemd-resolved, and it binds only the AP radio so it can never hand
+# addresses out on the ground station's wired subnet.
+[Unit]
+Description=Rover AP DHCP (dnsmasq)
+After=rover-ap.service
+BindsTo=rover-ap.service
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --interface=wlx00c0caba86c1 \
+    --bind-interfaces --except-interface=lo --listen-address=10.42.0.1 \
+    --dhcp-range=10.42.0.50,10.42.0.150,60m --port=0 --no-hosts \
+    --dhcp-authoritative
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

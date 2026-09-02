@@ -1,0 +1,35 @@
+{
+  "name": "indomitus-ground-station-ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Operator console for the Indomitus rover, talking to ROS 2 over rosbridge.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "preview": "vite preview",
+    "check": "npm run lint && node scripts/smoke-render.mjs && node scripts/check-function-binds.mjs && node scripts/check-config-sync.mjs && node scripts/check-switch-labels.mjs",
+    "check:render": "node scripts/smoke-render.mjs",
+    "check:bridge": "node scripts/check-connection.mjs",
+    "check:arm": "node scripts/check-arm-mapping.mjs",
+    "check:binds": "node scripts/check-function-binds.mjs",
+    "check:sync": "node scripts/check-config-sync.mjs",
+    "check:labels": "node scripts/check-switch-labels.mjs"
+  },
+  "dependencies": {
+    "lucide-react": "^1.25.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-router-dom": "^7.18.1",
+    "roslib": "^2.1.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "oxlint": "^1.71.0",
+    "vite": "^8.1.1"
+  }
+}

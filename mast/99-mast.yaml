@@ -1,0 +1,59 @@
+# /etc/netplan/99-mast.yaml on the ground-station mast Pi (GSRapberry).
+#
+# Replaces the original 01-mast.yaml, which never took effect: it declared
+# `renderer: networked` (a typo for `networkd`, so netplan rejected the whole
+# file), and even once corrected it sorted BEFORE 50-cloud-init.yaml, whose
+# `dhcp4: true` for eth0 would have overridden it. Netplan merges in lexical
+# order with last-one-wins, so this must stay 99-.
+#
+# Topology (see mast/README.md):
+#   GS PC  eno1/enp2s0  10.44.0.10/24   route 10.42.0.0/24 via 10.44.0.1
+#            |          point-to-point through the TP-Link POE160S injector
+#   Pi     eth0         10.44.0.1/24    <- this file
+#   Pi     wlx00c0...   10.42.0.2/24    <- this file, Alfa AWUS036ACH client
+#   Rover  wlan0        10.42.0.1/24    AP
+#
+# Deliberately NO default route on either interface here. Every hop in the rover
+# data path is on-link or covered by one static route, so nothing depends on a
+# gateway. The Pi's own internet (apt, DKMS rebuilds after a kernel update)
+# comes from the onboard wlan0 in 50-cloud-init.yaml; at competition there is no
+# internet and none is needed.
+#
+# Letting the Alfa take a DHCP lease is what we must avoid: the rover's AP runs
+# NetworkManager `ipv4.method shared`, whose DHCP hands out a default route, and
+# that route would compete with wlan0's for the Pi's default. Static, gateway-
+# less, and below the shared-mode pool start (~.10) so it cannot collide.
+#
+# eth0 keeps IPv6 link-local: that is the out-of-band recovery path
+# (ssh admin@fe80::8aa2:9eff:fec6:5546%<gs-iface>) if the IPv4 config is wrong.
+#
+# NOTE: the SSID below is the competition one, changed 2026-08-31 from the
+# pre-competition "IndomitusRover"/"12345678". ERC requires
+# "ERC_<TeamName>_(A/B)" - team name is UCU Space Robotics, not Indomitus,
+# which is the rover. The rover AP already broadcasts _A; _B is the spare
+# slot, so if the judges move the team to it, change access-points: here.
+#
+# No band or channel appears in this file and none should. netplan matches on
+# SSID alone, so the client follows the AP wherever it moves; the rover's AP is
+# on 5 GHz ch36 as of 2026-08-13 and this config needed no edit to follow it.
+# That is what makes the judges assigning a channel at the RF Check a rover-side
+# change only.
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    eth0:
+      dhcp4: no
+      dhcp6: no
+      link-local: [ipv6]
+      addresses: [10.44.0.1/24]
+      optional: true
+  wifis:
+    wlx00c0caba8237:
+      dhcp4: no
+      dhcp6: no
+      addresses: [10.42.0.2/24]
+      optional: true
+      access-points:
+        "ERC_UCUSpaceRobotics_A":
+          password: "19283746"
