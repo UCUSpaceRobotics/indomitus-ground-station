@@ -2,13 +2,31 @@
 #
 # Generates the Fast DDS profile that pins DDS traffic to the rover link.
 #
-# Why this exists: with the rover link adapter plugged in, the ground station
-# laptop has two live interfaces — the rover link (a USB WiFi adapter on
-# 10.44.0.0/24) and whatever provides internet. Fast DDS announces unicast
-# locators for *every* interface it can see, so the rover picks one and aims
-# user data at it. When it picks the internet-side address, that address is not
-# routable from the rover and every sample is dropped, while discovery keeps
-# working perfectly over multicast.
+# RUNS ON BOTH ENDS OF THE LINK. The ground station and the rover face the same
+# two problems, mirrored, so this is one script parameterised by two values
+# rather than two scripts that drift apart:
+#
+#                    ROVER_LINK_PREFIX   ROVER_PEER
+#   ground station   10.44.0.            10.42.0.1    (the rover)
+#   rover            10.42.0.            10.44.0.10   (the ground station)
+#
+# ROVER_LINK names the *path* between the two machines, not the machine at the
+# far end: on the rover, ROVER_PEER is the ground station. The names are kept
+# as they are because they are already spelled this way in the .env and compose
+# files on both sides, and a rename buys nothing but a migration.
+#
+# KEEP IN SYNC. This file is duplicated in indomitus-ground-station and
+# indomitus-rover-core. The rover in the field mounts no checkout of the other
+# repo (see docker-compose.prod.yaml: only src/ is bind-mounted) and there is no
+# shared package to put this in, so duplication is the honest option. The two
+# copies are meant to be byte-identical — diff them before trusting either.
+#
+# Why this exists: each end has more than one live interface — the rover link,
+# plus internet, wired lifeline, docker bridges. Fast DDS announces unicast
+# locators for *every* interface it can see, so the far end picks one and aims
+# user data at it. When it picks an address that is not routable across the
+# link, every sample is dropped, while discovery keeps working perfectly over
+# multicast.
 #
 # The result is the worst kind of failure: `ros2 node list`, `ros2 node info`
 # and `ros2 topic info -v` all look completely healthy — correct types, correct
@@ -47,15 +65,26 @@
 #   list`, `ros2 service list` and the UI's calibration service calls all come
 #   back empty.
 #
-#   initialPeersList adds a unicast peer for the rover, because the mast Pi is
-#   an L3 router between 10.44.0.0/24 and 10.42.0.0/24, and routers do not
+#   initialPeersList adds a unicast peer for the far end, because the mast Pi
+#   is an L3 router between 10.44.0.0/24 and 10.42.0.0/24, and routers do not
 #   forward link-local multicast — so SPDP finds nothing at all.
 #
 #   SPDP is symmetric *per participant*, not per host. Every ROS 2 node is its
-#   own DDS participant, and a rover participant we never probe never hears
-#   from us: its own announcements go out over multicast, which the mast Pi
-#   does not forward. So one peer entry is not enough — the rover needs one per
+#   own DDS participant, and a participant we never probe never hears from us:
+#   its own announcements go out over multicast, which the mast Pi does not
+#   forward. So one peer entry is not enough — the far end needs one per
 #   participant ID we intend to find.
+#
+#   RUN IT AT BOTH ENDS. One-sided config half-works, which is why this was
+#   easy to miss: an SPDP announcement carries the sender's own unicast
+#   locators, so a rover that is probed can answer the ground station directly
+#   without ever being configured. What it cannot do is speak first. A node
+#   that starts on an unprobed end is found only on the *other* end's next
+#   announcement round, never at its own startup, and a participant whose ID
+#   falls outside PEER_RANGE is never found at all. Configuring only one side
+#   also leaves the other announcing locators for every interface it happens to
+#   have — the exact failure described at the top of this file, pointed the
+#   other way.
 #
 #   Those entries are written with EXPLICIT PORTS, one locator per participant
 #   ID, and that detail is the whole reason this script was rewritten a second
@@ -91,6 +120,13 @@
 #   ROVER_LINK_IP=10.44.0.10 ./docker/gen-dds-profile.sh   # force linked mode
 #   ROVER_LINK_PREFIX=10.44.0. ./docker/gen-dds-profile.sh
 #   ROVER_PEER=10.42.0.1 ./docker/gen-dds-profile.sh
+#   DDS_PROFILE_OUT=/opt/dds/fastdds_rover_link.xml ./docker/gen-dds-profile.sh
+#   LINK_WAIT_SECS=60 ./docker/gen-dds-profile.sh  # wait for the link first
+#
+# The defaults below are the ground station's. The rover passes its own through
+# the environment in docker/docker-compose.prod.yaml; nothing here is defaulted
+# to rover values, so a missing override shows up as the wrong peer rather than
+# as a script that silently probes itself.
 #
 # Run automatically by docker/entrypoint.bash on every container start, so the
 # profile cannot outlive the topology it describes. Re-run it by hand (or just
@@ -102,15 +138,33 @@ set -euo pipefail
 # Address prefix that identifies the rover link. Matched literally against the
 # machine's own addresses; nothing is inferred from routes.
 LINK_PREFIX="${ROVER_LINK_PREFIX:-10.44.0.}"
-# The rover's address on the wireless segment — where SPDP announcements are
-# sent now that multicast cannot reach it.
+# The far end's address across the link — where SPDP announcements are sent now
+# that multicast cannot reach it. The rover from the ground station; the ground
+# station from the rover.
 PEER="${ROVER_PEER:-10.42.0.1}"
-# How many participant IDs to probe on the rover. Must exceed the number of
+# How many participant IDs to probe at the far end. Must exceed the number of
 # ROS 2 nodes running there (one participant each), with headroom for the ros2
 # CLI and daemon, which take IDs of their own. Each one becomes its own
 # explicitly-ported locator below.
+#
+# A participant landing outside this range is invisible with no fallback: its
+# own multicast announcements do not cross the mast Pi, and we never probe its
+# port. That is a silent, per-node failure, so leave headroom — the only cost
+# of a larger range is a longer file and a slightly wider announcement burst.
 PEER_RANGE="${ROVER_PEER_RANGE:-50}"
 DOMAIN="${ROS_DOMAIN_ID:-90}"
+# Seconds to wait for a link address to appear before settling on a mode.
+#
+# 0 (the default) decides immediately, which is right on the ground station:
+# the container is started by hand, after the link is up.
+#
+# The rover is the opposite case. Its container is `restart: unless-stopped`
+# and comes back on boot, racing rover-ap.service, which is what puts 10.42.0.1
+# on wlan0 — so a rover that decided immediately would very often decide
+# 'local', come up with no peer list, and never probe the ground station at all
+# until someone restarted it by hand. Waiting turns a boot-order race into a
+# few seconds of startup delay.
+LINK_WAIT_SECS="${LINK_WAIT_SECS:-0}"
 # Extra local addresses to whitelist alongside the rover link, space or comma
 # separated. Empty by default: the whitelist exists to stop Fast DDS announcing
 # locators the rover cannot route to, so widening it is always a deliberate act.
@@ -125,7 +179,17 @@ DOMAIN="${ROS_DOMAIN_ID:-90}"
 # Discovery still completes, but it is slower and noisier — so list only
 # addresses that a peer you actually care about can reach.
 EXTRA_ADDRS="${DDS_EXTRA_ADDRS:-}"
-OUT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fastdds_rover_link.xml"
+# Where to write the profile. Defaults to sitting next to this script, which is
+# what the ground station wants: the repo is bind-mounted at /work, so the file
+# lands in the checkout and is gitignored there.
+#
+# The rover has no checkout mounted — prod bind-mounts only src/ — so this
+# script ships inside the image and the profile is written to /opt/dds instead.
+# Setting this is also what arms generation in the rover's entrypoint, so the
+# one case that must NOT regenerate (docker-compose.dev.gs.yaml, where the
+# rover container reads the ground station's profile from a read-only mount)
+# simply leaves it unset.
+OUT="${DDS_PROFILE_OUT:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fastdds_rover_link.xml}"
 
 # RTPS well-known port for SPDP multicast: PB + DG*domainId + d0,
 # with PB=7400, DG=250, d0=0. The port must be spelled out because an initial
@@ -195,15 +259,39 @@ if [ -z "$ADDR_TOOL" ]; then
 fi
 
 LINK_IP=""
+# How the address was chosen, for the generated file's header. Worth spelling
+# out: a forced address that does not match ROVER_LINK_PREFIX is legitimate,
+# and reporting it as "matched prefix ..." would describe a match that never
+# happened.
+LINK_IP_SOURCE=""
 if [ -n "${ROVER_LINK_IP:-}" ]; then
     LINK_IP="$ROVER_LINK_IP"
+    LINK_IP_SOURCE="forced via ROVER_LINK_IP"
     if ! live_addrs | grep -qx "$LINK_IP"; then
         echo "warning: ROVER_LINK_IP=$LINK_IP is not an address on this machine." >&2
         echo "         Writing it anyway, as asked — but if it stays absent, DDS" >&2
         echo "         discovery will come back empty." >&2
     fi
 else
-    LINK_IP="$(live_addrs | grep -m1 -- "^${LINK_PREFIX}" || true)"
+    # Poll rather than sample once, so a container that beat the interface up
+    # does not settle on 'local' for the rest of the session. With
+    # LINK_WAIT_SECS=0 this runs the body exactly once and is identical to the
+    # single-sample version it replaced.
+    waited=0
+    while : ; do
+        LINK_IP="$(live_addrs | grep -m1 -- "^${LINK_PREFIX}" || true)"
+        [ -n "$LINK_IP" ] && break
+        [ "$waited" -ge "$LINK_WAIT_SECS" ] && break
+        if [ "$waited" = 0 ]; then
+            echo "waiting up to ${LINK_WAIT_SECS}s for an address matching ${LINK_PREFIX}*..."
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+    if [ -n "$LINK_IP" ] && [ "$waited" -gt 0 ]; then
+        echo "link address appeared after ${waited}s"
+    fi
+    LINK_IP_SOURCE="matched prefix $LINK_PREFIX"
 fi
 
 if [ -n "$LINK_IP" ]; then
@@ -218,14 +306,14 @@ cat > "$OUT" <<EOF
 <!--
   GENERATED by docker/gen-dds-profile.sh — do not edit by hand.
   Mode:               linked (rover link present)
-  Rover link address: $LINK_IP (matched prefix $LINK_PREFIX)
-  Discovery peers:    $MCAST_ADDR:$MCAST_PORT (local, domain $DOMAIN), $PEER (rover)
+  Rover link address: $LINK_IP ($LINK_IP_SOURCE)
+  Discovery peers:    $MCAST_ADDR:$MCAST_PORT (local, domain $DOMAIN), $PEER (far end)
   Extra whitelisted:  ${EXTRA_ADDRS:-none (set DDS_EXTRA_ADDRS to widen)}
-  Rover peer locators: participant IDs 0..$((PEER_RANGE - 1)), explicit ports
+  Peer locators:      participant IDs 0..$((PEER_RANGE - 1)), explicit ports
 
-  Restricts UDP to the rover link so Fast DDS stops announcing locators the
-  rover cannot route to, and adds a unicast discovery peer for the rover
-  because the mast Pi routes and multicast SPDP does not cross a router.
+  Restricts UDP to the rover link so Fast DDS stops announcing locators the far
+  end cannot route to, and adds a unicast discovery peer for it because the
+  mast Pi routes and multicast SPDP does not cross a router.
   See the header of gen-dds-profile.sh for why each element is load-bearing.
 -->
 <dds xmlns="http://www.eprosima.com">
