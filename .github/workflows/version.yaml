@@ -1,0 +1,56 @@
+name: Version Tagging
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # main gets a real release (minor bump, no pre-release marker); develop gets
+  # a pre-release train off the last real release (patch bump once, then a
+  # `-dev.N` counter per commit). Mirrors indomitus-rover-core's scheme.
+  tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      new_tag: ${{ steps.tag_version.outputs.new_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bump version and push tag
+        id: tag_version
+        uses: anothrNick/github-tag-action@1.71.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WITH_V: false
+          DEFAULT_BUMP: ${{ github.ref == 'refs/heads/main' && 'minor' || 'patch' }}
+          PRERELEASE: ${{ github.ref == 'refs/heads/develop' }}
+          PRERELEASE_SUFFIX: dev
+
+  # Body is just the checkout command — no auto-generated changelog text.
+  release:
+    needs: tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.tag.outputs.new_tag }}
+          name: ${{ github.ref == 'refs/heads/main' && format('Release {0}', needs.tag.outputs.new_tag) || format('Develop build {0}', needs.tag.outputs.new_tag) }}
+          prerelease: ${{ github.ref == 'refs/heads/develop' }}
+          generate_release_notes: false
+          body: |
+            ```bash
+            git fetch --tags && git checkout ${{ needs.tag.outputs.new_tag }}
+            ```

@@ -1,5 +1,8 @@
 # Indomitus Ground Station
 
+[![main](https://img.shields.io/github/v/release/UCUSpaceRobotics/indomitus-ground-station?label=main&color=green)](https://github.com/UCUSpaceRobotics/indomitus-ground-station/releases/latest)
+[![develop](https://img.shields.io/github/v/release/UCUSpaceRobotics/indomitus-ground-station?include_prereleases&label=develop)](https://github.com/UCUSpaceRobotics/indomitus-ground-station/releases)
+
 This repository contains the ground station software for the Indomitus Rover, specifically focused on joystick control and serial communication.
 
 ## Quick Start
