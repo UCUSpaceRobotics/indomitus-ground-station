@@ -1,5 +1,11 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
-import { Plus, RotateCcw, Trash2, Search } from 'lucide-react';
+import { FolderOpen, Plus, RotateCcw, Trash2, Search, X } from 'lucide-react';
+import {
+  chooseScreenshotDir,
+  forgetScreenshotDir,
+  getScreenshotDirHandle,
+  screenshotsSupported,
+} from '../lib/screenshotDir';
 import {
   DEFAULT_CAMERAS,
   DEFAULT_TOPICS,
@@ -69,6 +75,8 @@ export default function SettingsDialog({ open, onClose }) {
   const [scanState, setScanState] = useState('idle');
   const [bindStatus, setBindStatus] = useState(null);
   const [cameraSave, setCameraSave] = useState('idle');
+  const [screenshotDirName, setScreenshotDirName] = useState(null);
+  const [screenshotError, setScreenshotError] = useState(null);
   const callService = useServiceCaller();
 
   /** Last camera list handed to the config, so a no-op edit is not re-saved. */
@@ -154,6 +162,36 @@ export default function SettingsDialog({ open, onClose }) {
     }, CAMERA_SAVE_DELAY);
     return () => clearTimeout(timer);
   }, [draft.cameras]);
+
+  // The picked directory lives in IndexedDB (see lib/screenshotDir.js), not the
+  // config blob — a FileSystemDirectoryHandle cannot be JSON-serialized. Read
+  // it back whenever the dialog opens, same as everything else here.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    getScreenshotDirHandle().then((handle) => {
+      if (!cancelled) setScreenshotDirName(handle?.name ?? null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  const pickScreenshotDir = useCallback(async () => {
+    setScreenshotError(null);
+    try {
+      const handle = await chooseScreenshotDir();
+      setScreenshotDirName(handle.name);
+    } catch (err) {
+      // The user closing the picker throws AbortError — not a real failure.
+      if (err?.name !== 'AbortError') setScreenshotError(String(err.message || err));
+    }
+  }, []);
+
+  const clearScreenshotDir = useCallback(async () => {
+    await forgetScreenshotDir();
+    setScreenshotDirName(null);
+  }, []);
 
   const scanTopics = useCallback(() => {
     if (!ros) return;
@@ -535,6 +573,62 @@ export default function SettingsDialog({ open, onClose }) {
               MJPEG is lighter on the link. The rosbridge transport needs no extra rover-side node
               and reports true frame rate and frame age, which is what lets a frozen feed be
               distinguished from a live one.
+            </p>
+          </section>
+
+          <section>
+            <h3>Screenshots</h3>
+            {screenshotsSupported() ? (
+              <>
+                <div className="settings-row">
+                  <button type="button" className="btn btn-sm" onClick={pickScreenshotDir}>
+                    <FolderOpen size={13} /> {screenshotDirName ? 'Change folder' : 'Choose folder'}
+                  </button>
+                  {screenshotDirName && (
+                    <>
+                      <span className="mono">{screenshotDirName}</span>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={clearScreenshotDir}
+                        title="Forget this folder"
+                      >
+                        <X size={13} />
+                      </button>
+                    </>
+                  )}
+                </div>
+                {screenshotError && <p className="field-hint is-crit">{screenshotError}</p>}
+                <p className="field-hint">
+                  Where the save button on a camera feed writes frames. Each is named with the
+                  camera, date and time, down to the second. Shared by every window on this
+                  browser.
+                </p>
+              </>
+            ) : (
+              <p className="field-hint is-warn">
+                This browser cannot save straight to a folder — that needs a Chromium-based
+                browser. The option below saves frames as a regular download instead.
+              </p>
+            )}
+
+            <label className="field-check">
+              <input
+                type="checkbox"
+                checked={Boolean(draft.screenshotDownloadFallback)}
+                onChange={(event) =>
+                  setDraft({ ...draft, screenshotDownloadFallback: event.target.checked })
+                }
+              />
+              <span>
+                Fall back to a browser download when folder saving isn't available (no folder
+                chosen above, or an unsupported browser)
+              </span>
+            </label>
+            <p className="field-hint">
+              A fallback save lands in this browser's own downloads location, not the folder
+              above — the save pop-up says so whenever it happens, so it's never a silent
+              surprise.
             </p>
           </section>
 

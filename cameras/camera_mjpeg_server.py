@@ -266,6 +266,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Type', 'image/jpeg')
         self.send_header('Content-Length', str(len(jpeg)))
         self.send_header('Cache-Control', 'no-store')
+        # The ground station UI runs on a different origin (its own dev/preview
+        # port) and reads this response with fetch() to save a frame to disk
+        # (ui/src/lib/saveFrame.js) — without this header the browser's CORS
+        # check blocks it from ever seeing the bytes, and the UI has no way to
+        # ask for the header only when it is the one asking, so this is always
+        # on. A snapshot carries nothing sensitive, so the wildcard is fine.
+        self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
         self.wfile.write(jpeg)
 

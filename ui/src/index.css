@@ -869,6 +869,97 @@ kbd {
   letter-spacing: 0.06em;
 }
 
+/* Live badge shares its corner with the save button, so it stops positioning
+   itself and lets .feed-topright do it. The placeholder badge (.is-still) has
+   no sibling there and keeps the standalone absolute rule above. */
+.feed-topright {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.feed-topright .feed-badge {
+  position: static;
+}
+
+.feed-save {
+  transition: opacity 120ms ease;
+}
+
+/* Grid tiles: kept out of the way until the tile is actually being looked at.
+   The focus pane's save button (not inside .feed-tile) stays visible always. */
+.feed-scan-qr {
+  transition: opacity 120ms ease;
+}
+
+.feed-tile .feed-save,
+.feed-tile .feed-scan-qr {
+  opacity: 0;
+}
+
+.feed-tile:hover .feed-save,
+.feed-tile:hover .feed-scan-qr,
+.feed-save:focus-visible,
+.feed-scan-qr:focus-visible {
+  opacity: 1;
+}
+
+.feed-save-toast {
+  position: absolute;
+  top: 40px;
+  right: 8px;
+  z-index: 1;
+  max-width: calc(100% - 16px);
+  padding: 4px 9px;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feed-save-toast.is-crit {
+  color: var(--crit);
+}
+
+/* Unlike .feed-save-toast this does not auto-dismiss — it stays up until a
+   click lands outside it (see the pointerdown listener in CameraFeed.jsx),
+   since it may hold a link the operator still needs to read or click. */
+.feed-qr-popup {
+  position: absolute;
+  top: 40px;
+  right: 8px;
+  z-index: 2;
+  max-width: calc(100% - 16px);
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.feed-qr-popup.is-warn {
+  color: var(--warn);
+}
+
+.feed-qr-popup.is-crit {
+  color: var(--crit);
+}
+
+.feed-qr-popup a {
+  color: #7fc4ff;
+  text-decoration: underline;
+}
+
 .feed-badge svg {
   color: var(--crit);
   animation: pulse 1.6s ease-in-out infinite;
@@ -1527,6 +1618,20 @@ kbd {
 .field > span {
   font-size: 11.5px;
   color: var(--text-dim);
+}
+
+.field-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+
+.field-check input {
+  margin: 0;
+  flex: none;
 }
 
 .field input,

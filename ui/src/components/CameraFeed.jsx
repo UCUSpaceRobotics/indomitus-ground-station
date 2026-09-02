@@ -1,16 +1,28 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CameraOff, Image as ImageIcon, RefreshCw, Radio, RotateCw } from 'lucide-react';
-import { VIDEO_MODES, isDirectUrl, mjpegUrl, placeholderFor, useConfig } from '../config';
+import { CameraOff, Image as ImageIcon, QrCode, RefreshCw, Radio, RotateCw, Save } from 'lucide-react';
+import { VIDEO_MODES, isDirectUrl, mjpegUrl, placeholderFor, snapshotUrl, useConfig } from '../config';
 import { useTopic, useTick, isStale } from '../ros/useTopic';
 import { fmtAge, fmtNumber, stampToMs } from '../lib/format';
 import { rotateCamera, useRotation } from '../lib/rotation';
 import { paintMirror, drawMirror, subscribeMirror } from '../lib/frameMirror';
+import { fetchSnapshotBlob } from '../lib/cameraSnapshot';
+import { blobFromBase64, saveFrameBlob } from '../lib/saveFrame';
+import { decodeQrFromBlob } from '../lib/qrScan';
 
 const RETRY_BASE_MS = 1000;
 const RETRY_MAX_MS = 15_000;
 
 function retryDelay(attempt) {
   return Math.min(RETRY_BASE_MS * 2 ** Math.max(0, attempt - 1), RETRY_MAX_MS);
+}
+
+/** Only http(s) is ever offered as a clickable link — a QR is untrusted input. */
+function isHttpUrl(text) {
+  try {
+    return ['http:', 'https:'].includes(new URL(text).protocol);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -123,6 +135,9 @@ export default function CameraFeed({ camera, variant = 'main', className = '' })
 
   const [httpStatus, setHttpStatus] = useState('connecting');
   const [reloadKey, setReloadKey] = useState(0);
+  const [saveToast, setSaveToast] = useState(null);
+  const [qrResult, setQrResult] = useState(null);
+  const qrPopupRef = useRef(null);
   const now = useTick(1000);
   // Shared across every pane showing this camera — thumbnail, main and the
   // fullscreen route rotate together.
@@ -133,6 +148,26 @@ export default function CameraFeed({ camera, variant = 'main', className = '' })
     setHttpStatus('connecting');
     setReloadKey((k) => k + 1);
   }, []);
+
+  // Auto-dismiss the "saved"/error pop after a few seconds.
+  useEffect(() => {
+    if (!saveToast) return undefined;
+    const timer = setTimeout(() => setSaveToast(null), 3000);
+    return () => clearTimeout(timer);
+  }, [saveToast]);
+
+  // The QR result stays up until the operator dismisses it, not on a timer —
+  // it may hold a link they still need to read or click. Any pointerdown
+  // outside the popup itself closes it; a click on the popup (including the
+  // link it may contain) does not.
+  useEffect(() => {
+    if (!qrResult) return undefined;
+    const onPointerDown = (event) => {
+      if (!qrPopupRef.current?.contains(event.target)) setQrResult(null);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [qrResult]);
 
   // 33 ms, so a 30 fps publisher is not throttled down to 15 in the main pane.
   // rosbridge drops frames to honour this, and the drop happens *after* the
@@ -145,6 +180,70 @@ export default function CameraFeed({ camera, variant = 'main', className = '' })
     queueLength: 1,
     renderMs: 0,
   });
+
+  /**
+   * The frame behind both the save and the QR-scan buttons.
+   *
+   * Deliberately not a canvas capture of what's on screen. The camera
+   * servers (web_video_server, the Nano's mjpg-streamer) are cross-origin
+   * from the UI and send no CORS headers, so drawing their frames onto a
+   * `<canvas>` taints it — reading it back throws a SecurityError ("the
+   * operation is insecure") in every browser, not just Firefox. The ROS
+   * transport hands the frame over as base64 directly, so it is decoded
+   * straight to a Blob; the MJPEG transport re-fetches one still frame
+   * instead — see lib/cameraSnapshot.js for what happens when that fetch is
+   * itself CORS-blocked.
+   */
+  const getFrameBlob = useCallback(async () => {
+    if (rosMode) {
+      if (!rosFeed.message?.data) throw new Error('No frame available yet.');
+      const mime = String(rosFeed.message.format || '').includes('png') ? 'image/png' : 'image/jpeg';
+      const ext = mime === 'image/png' ? 'png' : 'jpg';
+      return { blob: blobFromBase64(rosFeed.message.data, mime), ext };
+    }
+    return { blob: await fetchSnapshotBlob(snapshotUrl(config, camera.topic)), ext: 'jpg' };
+  }, [rosMode, rosFeed.message, camera.topic, config]);
+
+  const handleSave = useCallback(
+    async (event) => {
+      // Grid tiles are themselves buttons (see CameraGrid); without this the
+      // click also bubbles up and switches the view to this camera.
+      event.stopPropagation();
+      setQrResult(null);
+      try {
+        const { blob, ext } = await getFrameBlob();
+        const result = await saveFrameBlob(blob, camera.name, ext, {
+          allowDownloadFallback: config.screenshotDownloadFallback,
+        });
+        setSaveToast({
+          tone: 'ok',
+          text: result.viaFallback
+            ? `Downloaded ${result.filename} (folder saving unavailable — check your browser's downloads)`
+            : `Saved ${result.filename}`,
+        });
+      } catch (err) {
+        setSaveToast({ tone: 'crit', text: String(err.message || err) });
+      }
+    },
+    [getFrameBlob, camera.name, config.screenshotDownloadFallback],
+  );
+
+  const handleScanQr = useCallback(
+    async (event) => {
+      event.stopPropagation();
+      setSaveToast(null);
+      try {
+        const { blob } = await getFrameBlob();
+        const text = await decodeQrFromBlob(blob);
+        setQrResult(
+          text ? { tone: 'ok', text } : { tone: 'warn', text: 'No QR code detected in this frame.' },
+        );
+      } catch (err) {
+        setQrResult({ tone: 'crit', text: String(err.message || err) });
+      }
+    },
+    [getFrameBlob],
+  );
 
   const rosStale = isStale(rosFeed.receivedAt, now, Math.max(3000, frameIntervalMs * 5));
   let status = httpStatus;
@@ -236,20 +335,69 @@ export default function CameraFeed({ camera, variant = 'main', className = '' })
         </button>
       )}
 
+      {/* Top right: LIVE badge, save-frame and scan-QR buttons share this
+          corner. Both buttons only exist while there is an actual frame to
+          act on — no feed, no buttons. In the focus pane they are always
+          visible; on a grid tile they only appear on hover (see
+          .feed-tile .feed-save, .feed-tile .feed-scan-qr in index.css). */}
       {status === 'live' && !isThumb && (
-        <div className="feed-badge">
-          <Radio size={12} />
-          LIVE
-          {rosMode && rosFeed.hz > 0 && (
-            <span className="feed-badge-stat">{fmtNumber(rosFeed.hz, 1)} fps</span>
-          )}
-          {rosMode && frameAgeMs !== null && (
-            <span className="feed-badge-stat">{fmtAge(frameAgeMs)}</span>
-          )}
-          {rosMode && stampMs !== null && rosFeed.receivedAt > 0 && (
-            <span className="feed-badge-stat" title="Rover timestamp to browser arrival">
-              {fmtAge(rosFeed.receivedAt - stampMs)} link
-            </span>
+        <div className="feed-topright">
+          <button
+            type="button"
+            className="btn btn-sm feed-scan-qr"
+            onClick={handleScanQr}
+            title={`Scan QR code from ${camera.name}`}
+            aria-label={`Scan QR code in the current frame from ${camera.name}`}
+          >
+            <QrCode size={13} />
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm feed-save"
+            onClick={handleSave}
+            title={`Save frame from ${camera.name}`}
+            aria-label={`Save current frame from ${camera.name}`}
+          >
+            <Save size={13} />
+          </button>
+          <div className="feed-badge">
+            <Radio size={12} />
+            LIVE
+            {rosMode && rosFeed.hz > 0 && (
+              <span className="feed-badge-stat">{fmtNumber(rosFeed.hz, 1)} fps</span>
+            )}
+            {rosMode && frameAgeMs !== null && (
+              <span className="feed-badge-stat">{fmtAge(frameAgeMs)}</span>
+            )}
+            {rosMode && stampMs !== null && rosFeed.receivedAt > 0 && (
+              <span className="feed-badge-stat" title="Rover timestamp to browser arrival">
+                {fmtAge(rosFeed.receivedAt - stampMs)} link
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {saveToast && !isThumb && (
+        <div className={`feed-save-toast is-${saveToast.tone}`}>{saveToast.text}</div>
+      )}
+
+      {/* Stays up until the operator dismisses it (click anywhere outside),
+          not on a timer — see the pointerdown listener above. Content
+          decoded from a live camera feed is untrusted: rendered as text, and
+          only ever offered as a clickable link when it parses as http(s). */}
+      {qrResult && !isThumb && (
+        <div className={`feed-qr-popup is-${qrResult.tone}`} ref={qrPopupRef}>
+          {qrResult.tone === 'ok' ? (
+            isHttpUrl(qrResult.text) ? (
+              <a href={qrResult.text} target="_blank" rel="noopener noreferrer" className="mono">
+                {qrResult.text}
+              </a>
+            ) : (
+              <span className="mono">{qrResult.text}</span>
+            )
+          ) : (
+            <span>{qrResult.text}</span>
           )}
         </div>
       )}
