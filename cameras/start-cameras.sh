@@ -40,6 +40,7 @@ WIFI_SSID=${WIFI_SSID:-ERC_UCUSpaceRobotics_A}
 WIFI_PASS=${WIFI_PASS:-19283746}
 JETSON_IP=${JETSON_IP:-}         # empty = $JETSON_HOTSPOT_IP, or $JETSON_ETHERNET_IP with --eth
 JETSON_SSH=${JETSON_SSH:-}       # empty = derived from --user/--ip/--eth below; set to override outright
+NO_WIFI=${NO_WIFI:-false}        # skip the Wi-Fi auto-connect and go straight to ssh (already on the network, or connected some other way)
 # First camera's port; each further camera takes the next one up. NOT 8080:
 # web_video_server owns that on the GS.
 FIRST_PORT=${FIRST_PORT:-8090}
@@ -103,6 +104,8 @@ See the header of this file for why this camera is not a ROS topic.
 
 Options
   --eth           use wired Ethernet ($JETSON_ETHERNET_IP) instead of the hotspot
+  --no-wifi, -n   skip the Wi-Fi auto-connect and ssh straight to the Jetson
+                                          (default: $NO_WIFI)
   --user U        Jetson SSH username             (default: $JETSON_USER)
   --ip IP         Jetson IP/host, overrides --eth's default
                                           (default: $JETSON_HOTSPOT_IP, or $JETSON_ETHERNET_IP with --eth)
@@ -144,6 +147,7 @@ EOF
 while [ $# -gt 0 ]; do
     case "$1" in
         --eth)     USE_ETH=true; shift ;;
+        --no-wifi|-n) NO_WIFI=true; shift ;;
         --user)    JETSON_USER=$2; shift 2 ;;
         --ip)      JETSON_IP=$2; shift 2 ;;
         --ssid)    WIFI_SSID=$2; shift 2 ;;
@@ -195,7 +199,11 @@ head_ "Jetson at $JETSON_SSH"
 if [ "$DRY" = 1 ]; then
     say "dry run — nothing will be touched"
 else
-    ensure_wifi_connection "$WIFI_SSID" "$WIFI_PASS" "$USE_ETH"
+    if [ "$NO_WIFI" = true ]; then
+        say "--no-wifi: skipping Wi-Fi auto-connect, ssh'ing directly"
+    else
+        ensure_wifi_connection "$WIFI_SSID" "$WIFI_PASS" "$USE_ETH"
+    fi
     # exits (not returns) on timeout, e.g. no ssh-copy-id done yet — see utils.sh
     wait_for_ssh "$JETSON_SSH" 30 "$USE_ETH"
     ok "$( $SSH "$JETSON_SSH" '. /etc/os-release; echo "$PRETTY_NAME $(uname -r)"' 2>/dev/null )"
