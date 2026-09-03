@@ -146,6 +146,15 @@ function defaults() {
     theme: 'dark',
     cameras: DEFAULT_CAMERAS,
     topics: DEFAULT_TOPICS,
+    /**
+     * Off by default: a browser that cannot save straight to the chosen folder
+     * (Firefox, Safari — no File System Access API) or has no folder picked
+     * yet falls back to a plain browser download instead of the save button
+     * just failing. Left off unless an operator opts in, since a download
+     * lands wherever the browser's own downloads setting says, not the
+     * folder configured here — worth knowing about before it happens mid-run.
+     */
+    screenshotDownloadFallback: false,
     /** Node the calibration wizard reconfigures, for its parameter services. */
     joyNode: '/gs/console_boards',
     /** Node the arm-mapping page reconfigures. */
@@ -329,6 +338,7 @@ function normalize(raw) {
     theme: merged.theme === 'light' ? 'light' : 'dark',
     cameras: normalizeCameras(merged.cameras),
     topics: migrateTopics(merged.topics),
+    screenshotDownloadFallback: Boolean(merged.screenshotDownloadFallback),
     // serial_joy_node and switch_reader_node were merged into one node. A
     // console that saved its settings before that has the old name in
     // localStorage, and pointing the wizard at a node that no longer exists
