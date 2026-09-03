@@ -1,9 +1,15 @@
 # mast/cameras/cameras.yaml — the list of cameras this rover carries.
 #
-# Maps a camera name (used in its stream URL and log file to its udev symlink.
+# Maps a camera name (used in its stream URL and log file) to its udev symlink.
 # Check a camera's real modes/formats with `ssh <jetson> v4l2-ctl -d <device> --list-formats-ext`.
 #
 # Empty/missing `cameras:` falls back to auto-discovering every /dev/video*.
+#
+# Each camera's HTTP port is fixed by its position in this file (start-cameras.sh's
+# --port/FIRST_PORT, default 8090, plus the camera's index here) — NOT by how
+# many cameras happen to be working on a given run. That keeps a camera's URL
+# (name + port) stable across launches even if another camera drops out. Set
+# an explicit `port:` below to pin one regardless of list order/position.
 
 cameras:
   # YUYV:
@@ -19,6 +25,7 @@ cameras:
   #   both           the raw joined frame, uncropped (default if omitted)
   zed2i-stereo-camera-front:
     device: /dev/zed2i-stereo-camera
+    port: 8090   # persistent: http://10.42.0.1:8090/zed2i-stereo-camera-front?action=stream
     res: 1344x376
     fps: 15
     quality: 60
@@ -29,6 +36,7 @@ cameras:
   # 960x600 @80/60/30/15fps
   arducam-mast:
     device: /dev/arducam-mast
+    port: 8091   # persistent: http://10.42.0.1:8091/arducam-mast?action=stream
     res: 960x600
     fps: 15
     quality: 70
@@ -38,6 +46,7 @@ cameras:
   # 960x600 @80/60/30/15fps
   arducam-front:
     device: /dev/arducam-front
+    port: 8092   # persistent: http://10.42.0.1:8092/arducam-front?action=stream
     res: 960x600
     fps: 15
     quality: 50
@@ -47,6 +56,7 @@ cameras:
   # 960x600 @80/60/30/15fps
   arducam-rear:
     device: /dev/arducam-rear
+    port: 8093   # persistent: http://10.42.0.1:8093/arducam-rear?action=stream
     res: 960x600
     fps: 15
     quality: 50
@@ -56,6 +66,7 @@ cameras:
   # 960x600 @80/60/30/15fps
   arducam-backup:
     device: /dev/arducam-backup
+    port: 8094   # persistent: http://10.42.0.1:8094/arducam-backup?action=stream
     res: 960x600
     fps: 15
     quality: 50
@@ -80,6 +91,7 @@ cameras:
   # 2592x1944 @1fps
   arm-camera:
     device: /dev/arm-camera
+    port: 8095   # persistent: http://10.42.0.1:8095/arm-camera?action=stream
     res: 640x480
     fps: 30
     quality: 60
@@ -97,6 +109,7 @@ cameras:
   # 320x240 @30fps
   spectral-camera-front:
     device: /dev/spectral-camera
+    port: 8096   # persistent: http://10.42.0.1:8096/spectral-camera-front?action=stream
     res: 640x480
     fps: 30
     quality: 60
@@ -119,6 +132,7 @@ cameras:
   # 320x240 @60/50/30/10fps
   thermal-camera-front:
     device: /dev/thermal-camera
+    port: 8097   # persistent: http://10.42.0.1:8097/thermal-camera-front?action=stream
     res: 480x320
     fps: 10
     quality: 50

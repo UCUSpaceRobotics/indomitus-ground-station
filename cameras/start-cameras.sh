@@ -23,6 +23,13 @@
 # name, which then appears in its stream URL and log file. With no config
 # (or an empty one) every /dev/video* node is auto-discovered instead, named
 # after its device.
+#
+# A camera's HTTP port is likewise fixed by its position in cameras.yaml
+# (FIRST_PORT + index in the file, or an explicit `port:` override) — never
+# by how many cameras happen to pass probing on a given run. Assigning ports
+# by survivor-count would mean one camera transiently failing its probe
+# shifts every later camera down a port, so a bookmarked UI tile silently
+# starts pointing at the wrong feed even though its name never changed.
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -115,6 +122,10 @@ Options
   --config FILE   name -> udev symlink camera list (default: $CONFIG)
                   See cameras/cameras.yaml for the format. Missing file or empty
                   \`cameras:\` falls back to auto-discovering every /dev/video*.
+                  Each camera's port is fixed by its position in this file
+                  (FIRST_PORT + index), not by which cameras happen to be up
+                  this run, so a name always lands on the same port across
+                  launches. Override with a per-camera \`port:\` key.
   --dev LIST      comma-separated camera names or devices to serve
                   ('' = every configured/found camera) (default: ${DEV_FILTER:-all})
   --res WxH       capture resolution      (default: $DEFAULT_RES)
@@ -251,19 +262,27 @@ if not isinstance(cams, dict):
     print('ERROR|%s: top-level "cameras" must map name -> {device, ...}' % path)
     sys.exit(0)
 
-for name, cfg in cams.items():
+for idx, (name, cfg) in enumerate(cams.items()):
     cfg = cfg or {}
     device = cfg.get('device')
     if not device:
         print('ERROR|%s: camera "%s" has no device' % (path, name))
         sys.exit(0)
-    print('OK|%s|%s|%s|%s|%s|%s|%s' % (
+    print('OK|%s|%s|%s|%s|%s|%s|%s|%s|%s' % (
         name, device, cfg.get('res', ''), cfg.get('fps', ''), cfg.get('quality', ''),
-        cfg.get('format', ''), cfg.get('view', '')))
+        cfg.get('format', ''), cfg.get('view', ''), cfg.get('port', ''), idx))
 PY
 ) || die "cannot parse $CONFIG — is PyYAML installed? (pip install pyyaml)"
 
-    while IFS='|' read -r STATUS NAME DEV RES FPS QUALITY FORMAT VIEW; do
+    # Each camera's port is fixed by its position in $CONFIG (or an explicit
+    # `port:` override), NOT by how many cameras happen to pass probing this
+    # run. Assigning ports by survivor-count means one camera transiently
+    # failing its probe (a slow USB renegotiation, a momentarily wedged node)
+    # shifts every later camera's port down by one — the name stays put but
+    # the port it answers on doesn't, silently pointing a bookmarked UI tile
+    # at the wrong feed. Fixed, per-name ports make a camera's URL stable
+    # across runs regardless of what else is plugged in or working.
+    while IFS='|' read -r STATUS NAME DEV RES FPS QUALITY FORMAT VIEW CFGPORT IDX; do
         [ -n "$STATUS" ] || continue
         [ "$STATUS" = ERROR ] && die "$NAME"
         [ -n "$RES" ] && [ "$RES" != "-" ] || RES=$DEFAULT_RES
@@ -271,7 +290,12 @@ PY
         [ -n "$QUALITY" ] && [ "$QUALITY" != "-" ] || QUALITY=$DEFAULT_QUALITY
         [ -n "$FORMAT" ] && [ "$FORMAT" != "-" ] || FORMAT=$DEFAULT_FORMAT
         [ -n "$VIEW" ] && [ "$VIEW" != "-" ] || VIEW=$DEFAULT_VIEW
-        CONF_CAMS="$CONF_CAMS$NAME|$DEV|$RES|$FPS|$QUALITY|$FORMAT|$VIEW
+        if [ -n "$CFGPORT" ] && [ "$CFGPORT" != "-" ]; then
+            CAMPORT=$CFGPORT
+        else
+            CAMPORT=$((FIRST_PORT + IDX))
+        fi
+        CONF_CAMS="$CONF_CAMS$NAME|$DEV|$RES|$FPS|$QUALITY|$FORMAT|$VIEW|$CAMPORT
 "
     done <<EOF
 $PARSED
@@ -319,14 +343,14 @@ probe_camera() {
 }
 
 if [ "$DRY" = 1 ]; then
-    CAMS="dry-cam|/dev/videoDRY|2-1.1|5000|(dry run)|$DEFAULT_RES|$DEFAULT_FPS|$DEFAULT_QUALITY|$DEFAULT_FORMAT|$DEFAULT_VIEW"
+    CAMS="dry-cam|/dev/videoDRY|2-1.1|5000|(dry run)|$DEFAULT_RES|$DEFAULT_FPS|$DEFAULT_QUALITY|$DEFAULT_FORMAT|$DEFAULT_VIEW|$FIRST_PORT"
 elif [ -n "$CONF_CAMS" ]; then
     CAMS="" REJECTED=""
-    while IFS='|' read -r NAME DEV RES FPS QUALITY FORMAT VIEW; do
+    while IFS='|' read -r NAME DEV RES FPS QUALITY FORMAT VIEW CAMPORT; do
         [ -n "$NAME" ] || continue
         RESULT=$(probe_camera "$NAME" "$DEV" "$RES" "$FPS" "$FORMAT")
         case "$RESULT" in
-            OK\|*)   CAMS="$CAMS${RESULT#OK|}|$RES|$FPS|$QUALITY|$FORMAT|$VIEW
+            OK\|*)   CAMS="$CAMS${RESULT#OK|}|$RES|$FPS|$QUALITY|$FORMAT|$VIEW|$CAMPORT
 " ;;
             SKIP\|*) REJECTED="$REJECTED${RESULT#SKIP|}
 " ;;
@@ -360,10 +384,13 @@ else
     REJECTED=$(printf '%s\n' "$CAMS" | sed -n 's/^SKIP|//p')
     CAMS=$(printf '%s\n' "$CAMS" | sed -n 's/^OK|//p')
     # No --config: name each camera after its device basename (e.g. "video0"),
-    # and give every one the same global res/fps/quality/format/view.
+    # and give every one the same global res/fps/quality/format/view. Port is
+    # keyed off the video node's own number (video0 -> FIRST_PORT+0, ...), not
+    # a running count of survivors — the same shifting-port bug as the
+    # configured path otherwise applies here too when a node drops out.
     CAMS=$(printf '%s\n' "$CAMS" | awk -F'|' -v res="$DEFAULT_RES" -v fps="$DEFAULT_FPS" \
-        -v q="$DEFAULT_QUALITY" -v fmt="$DEFAULT_FORMAT" -v view="$DEFAULT_VIEW" \
-        'BEGIN{OFS="|"} NF{n=$1; sub(/^.*\//,"",n); print n,$1,$2,$3,$4,res,fps,q,fmt,view}')
+        -v q="$DEFAULT_QUALITY" -v fmt="$DEFAULT_FORMAT" -v view="$DEFAULT_VIEW" -v firstport="$FIRST_PORT" \
+        'BEGIN{OFS="|"} NF{n=$1; sub(/^.*\//,"",n); vidnum=n; gsub(/[^0-9]/,"",vidnum); port=firstport+vidnum; print n,$1,$2,$3,$4,res,fps,q,fmt,view,port}')
     REJECTED=$(printf '%s\n' "$REJECTED" | awk -F'|' \
         'BEGIN{OFS="|"} NF{n=$1; sub(/^.*\//,"",n); print n,$1,$2,$3,$4,$5}')
 fi
@@ -421,8 +448,7 @@ if [ "$DRY" != 1 ]; then
     fi
 fi
 
-PORT=$FIRST_PORT
-while IFS='|' read -r NAME DEV UPATH SPEED CARD RES FPS QUALITY FORMAT VIEW; do
+while IFS='|' read -r NAME DEV UPATH SPEED CARD RES FPS QUALITY FORMAT VIEW PORT; do
     [ -n "$DEV" ] || continue
     say ""
     say "$NAME  ($DEV)  ->  port $PORT"
@@ -466,7 +492,6 @@ while IFS='|' read -r NAME DEV UPATH SPEED CARD RES FPS QUALITY FORMAT VIEW; do
             say "  no MJPEG — the Jetson encodes this one"
         fi
     fi
-    PORT=$((PORT + 1))
 done <<EOF
 $CAMS
 EOF
@@ -529,9 +554,8 @@ fi
 
 head_ "Streams"
 
-PORT=$FIRST_PORT
 STARTED=""
-while IFS='|' read -r NAME DEV UPATH SPEED CARD RES FPS QUALITY FORMAT VIEW; do
+while IFS='|' read -r NAME DEV UPATH SPEED CARD RES FPS QUALITY FORMAT VIEW PORT; do
     [ -n "$DEV" ] || continue
     LOG=/tmp/camera_mjpeg_$NAME.log
     # Container mode uses `docker exec -d`, which is already detached and
@@ -549,7 +573,6 @@ while IFS='|' read -r NAME DEV UPATH SPEED CARD RES FPS QUALITY FORMAT VIEW; do
     fi
     STARTED="$STARTED$NAME|$DEV|$PORT|$LOG
 "
-    PORT=$((PORT + 1))
 done <<EOF
 $CAMS
 EOF
