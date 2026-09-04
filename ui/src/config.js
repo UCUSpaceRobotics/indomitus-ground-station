@@ -29,15 +29,22 @@ export const VIDEO_MODES = {
 /**
  * The Jetson Nano's cameras are NOT ROS topics — it runs Ubuntu 18.04, where
  * Humble has no binaries, so there is no v4l2_camera_node. cameras/start-cameras.sh
- * serves each one over plain HTTP instead, one port per camera counting up from
- * 8090. A camera row holding an absolute URL is read straight by the browser;
- * see isDirectUrl() below and "Cameras outside ROS" in README.md.
+ * serves each one over plain HTTP instead, one port per camera. A camera row
+ * holding an absolute URL is read straight by the browser; see isDirectUrl()
+ * below and "Cameras outside ROS" in README.md.
  *
  * Overridable because the rover's link address is the one thing that changes
  * between the bench and a competition network.
  */
 const NANO_HOST = envOr('VITE_NANO_HOST', '10.42.0.1');
-const nanoCamera = (port) => `http://${NANO_HOST}:${port}/?action=stream`;
+
+/**
+ * The name in the path is what `start-cameras.sh` prints and what the server
+ * logs; the server itself routes on `action=stream` and ignores the path
+ * (see do_GET() in cameras/camera_mjpeg_server.py), so it is there to make a
+ * tile's URL readable rather than to select the camera — the port does that.
+ */
+const nanoCamera = (port, name) => `http://${NANO_HOST}:${port}/${name}?action=stream`;
 
 /**
  * `group` decides which monitor a camera lands on, replacing the old
@@ -45,27 +52,27 @@ const nanoCamera = (port) => `http://${NANO_HOST}:${port}/?action=stream`;
  * `switchIndex` is the bit in /gs/switches (from console_boards) that gates it.
  */
 export const DEFAULT_CAMERAS = [
-  // Two kinds of entry live here.
+  // One row per camera in `cameras/cameras.yaml`, in that file's order, and
+  // these two files have to be edited together: the port here must be the
+  // `port:` pinned there, because that pin is the only thing tying a URL to a
+  // physical camera (`cameras.yaml` pins ports precisely so a tile keeps
+  // pointing at the same lens when another camera drops out of a run).
   //
-  // cam1/cam3 are absolute URLs: the two live Nano feeds, read straight by the
-  // browser with no ROS in the path. Rename them in the settings dialog once
-  // their mounting is settled — the operator reads these names.
+  // switchIndex follows the same order, so switch bit N gates the camera on
+  // port 8090+N.
   //
-  // Every other row is a ROS *base* image topic, and all of them are currently
-  // aspirational: the rover Jetson was replaced by a Nano running no ROS, so
-  // nothing publishes them today. Both transports append the `/compressed`
-  // suffix themselves — `ros` mode subscribes to `<topic>/compressed`, and
-  // web_video_server's `ros_compressed` type resolves the same companion — so a
-  // topic written with `/compressed` already on it ends up looking for
-  // `<topic>/compressed/compressed`, which nothing publishes.
-  { id: 'cam1', name: 'Nano Camera 1', topic: nanoCamera(8090), switchIndex: 0, group: 'main' },
-  { id: 'cam2', name: 'Arm End Effector', topic: '/camera/arm/image_raw', switchIndex: 1, group: 'aux' },
-  { id: 'cam3', name: 'Nano Camera 2', topic: nanoCamera(8091), switchIndex: 2, group: 'main' },
-  { id: 'cam4', name: 'Mast Pan/Tilt', topic: '/camera/mast/image_raw', switchIndex: 3, group: 'main' },
-  { id: 'cam5', name: 'Nano Camera 3', topic: nanoCamera(8092), switchIndex: 4, group: 'main' },
-  { id: 'cam6', name: 'Right Stereo', topic: '/camera/right/image_raw', switchIndex: 5, group: 'main' },
-  { id: 'cam7', name: 'Underbelly', topic: '/camera/belly/image_raw', switchIndex: 6, group: 'aux' },
-  { id: 'cam8', name: 'Science Payload', topic: '/camera/science/image_raw', switchIndex: 7, group: 'aux' },
+  // `main` is the right monitor's camera wall — the feeds driving is done on.
+  // `aux` is the left monitor, alongside telemetry: the payload and inspection
+  // cameras, plus the spare Arducam, which is dark unless a mast/front/rear
+  // unit has been swapped out for it.
+  { id: 'zed2i-front', name: 'ZED2i Front (left eye)', topic: nanoCamera(8090, 'zed2i-stereo-camera-front'), switchIndex: 0, group: 'main' },
+  { id: 'arducam-mast', name: 'Mast', topic: nanoCamera(8091, 'arducam-mast'), switchIndex: 1, group: 'main' },
+  { id: 'arducam-front', name: 'Front', topic: nanoCamera(8092, 'arducam-front'), switchIndex: 2, group: 'main' },
+  { id: 'arducam-rear', name: 'Rear', topic: nanoCamera(8093, 'arducam-rear'), switchIndex: 3, group: 'main' },
+  { id: 'arducam-backup', name: 'Spare Arducam', topic: nanoCamera(8094, 'arducam-backup'), switchIndex: 4, group: 'aux' },
+  { id: 'arm-camera', name: 'Arm End Effector', topic: nanoCamera(8095, 'arm-camera'), switchIndex: 5, group: 'aux' },
+  { id: 'spectral-front', name: 'Spectral', topic: nanoCamera(8096, 'spectral-camera-front'), switchIndex: 6, group: 'aux' },
+  { id: 'thermal-front', name: 'Thermal', topic: nanoCamera(8097, 'thermal-camera-front'), switchIndex: 7, group: 'aux' },
 ];
 
 /**
@@ -81,11 +88,13 @@ export const DEFAULT_CAMERAS = [
  * cameras are publishing.
  */
 const PLACEHOLDER_BY_ID = {
-  cam2: gripperCam,
-  cam4: mastCam,
+  'arm-camera': gripperCam,
+  'arducam-mast': mastCam,
 };
 
 const PLACEHOLDER_BY_TOPIC = {
+  // The pre-Nano ROS topics these stand-ins were written for. Kept so a console
+  // still holding the old camera table in localStorage keeps its placeholders.
   '/camera/arm/image_raw': gripperCam,
   '/camera/mast/image_raw': mastCam,
 };

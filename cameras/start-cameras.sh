@@ -327,8 +327,14 @@ probe_camera() {
         n=\$(basename \"\$real\")
         sys=\$(readlink -f /sys/class/video4linux/\$n/device/..)
         info=\"\$(basename \$sys)|\$(cat \$sys/speed 2>/dev/null)|\$(cat \$sys/product 2>/dev/null)\"
-        if ! v4l2-ctl -d \"\$d\" --list-formats 2>/dev/null | grep -q 'Video Capture'; then
-            echo \"SKIP|$NAME|$DEV|\$info|not a capture node\"
+        if ! command -v v4l2-ctl >/dev/null 2>&1; then
+            echo \"SKIP|$NAME|$DEV|\$info|v4l2-ctl is not installed on the Jetson\"
+            exit 0
+        fi
+        formats=\$(v4l2-ctl -d \"\$d\" --list-formats 2>&1)
+        if ! echo \"\$formats\" | grep -q 'Video Capture'; then
+            why=\$(echo \"\$formats\" | grep -m1 -i 'failed\|error\|cannot\|inappropriate' | tr -d '|')
+            echo \"SKIP|$NAME|$DEV|\$info|not a capture node\${why:+ — \$why}\"
             exit 0
         fi
         # A node can enumerate and still refuse to stream (a camera that
@@ -374,7 +380,7 @@ else
             sys=\$(readlink -f /sys/class/video4linux/\$n/device/..)
             info=\"\$d|\$(basename \$sys)|\$(cat \$sys/speed 2>/dev/null)|\$(cat \$sys/product 2>/dev/null)\"
             if ! v4l2-ctl -d \"\$d\" --list-formats 2>/dev/null | grep -q 'Video Capture'; then
-                echo \"SKIP|\$info|not a capture node\"
+                echo \"SKIP|\$info|not a capture node (v4l2-ctl could not enumerate Video Capture)\"
                 continue
             fi
             err=\$(v4l2-ctl -d \"\$d\" --set-fmt-video=width=${DEFAULT_RES%x*},height=${DEFAULT_RES#*x},pixelformat=$DEFAULT_FORMAT 2>&1 \
