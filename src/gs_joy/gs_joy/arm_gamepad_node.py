@@ -3,11 +3,13 @@
 ``gamepad_servo_node`` on the rover drives the arm from ``sensor_msgs/Joy`` in
 the canonical SDL GameController layout. The console is not a gamepad, so this
 node assembles that layout from the two panel boards and publishes it on its
-own topic — by default ``/arm/joy``, not ``/joy``, because ``/joy`` already
+own topic — by default ``arm/joy``, not ``/joy``, because ``/joy`` already
 carries the console's own raw frame for the drive nodes and the calibration
-wizard. Point the rover's gamepad node at this topic:
+wizard. The name is relative, so under the ``/gs`` namespace gs.launch.py pushes
+it resolves to ``/gs/arm/joy`` and the whole ground station stays in one subtree.
+Point the rover's gamepad node at this topic:
 
-    ros2 launch arm_tasks gamepad.launch.py --ros-args -r joy:=/arm/joy
+    ros2 launch arm_tasks gamepad.launch.py --ros-args -r joy:=/gs/arm/joy
 
 Which console control fills which SDL slot is configuration, not code: only the
 people holding the console know what is under each label. Bindings are one flat
@@ -56,7 +58,10 @@ class ArmGamepadNode(Node):
     def __init__(self):
         super().__init__('arm_gamepad')
 
-        self.declare_parameter('output_topic', '/arm/joy')
+        # Relative on purpose: it inherits the node's namespace, so the
+        # console's arm frame lives under /gs with the rest of the ground
+        # station. A leading slash here puts it at the graph root instead.
+        self.declare_parameter('output_topic', 'arm/joy')
         # 50 Hz: the arm's /joy timeout is 0.2 s, so this has wide margin while
         # staying well under the 200 Hz the stick board actually produces.
         self.declare_parameter('publish_rate', 50.0)

@@ -54,8 +54,10 @@ def generate_launch_description():
 
     arm_joy_topic_arg = DeclareLaunchArgument(
         'arm_joy_topic',
-        default_value=EnvironmentVariable('ARM_JOY_TOPIC', default_value='/arm/joy'),
-        description="Topic the arm's gamepad_servo_node should be remapped onto"
+        default_value=EnvironmentVariable('ARM_JOY_TOPIC', default_value='arm/joy'),
+        description="Topic the arm's gamepad_servo_node should be remapped onto. "
+                    "Relative, so it lands under the /gs namespace gs.launch.py pushes; "
+                    "give it a leading slash to place it at the graph root instead"
     )
 
     # Which console control calls which rover service. Shipped defaults; the
@@ -166,7 +168,7 @@ def generate_launch_description():
         # The console, dressed as an SDL gamepad, for the arm's
         # gamepad_servo_node. Its own topic rather than /joy: /joy already
         # carries the console's raw frame, which is a different layout
-        # entirely. Point the rover's gamepad node at /arm/joy.
+        # entirely. Point the rover's gamepad node at /gs/arm/joy.
         Node(
             package='gs_joy',
             executable='arm_gamepad_node',

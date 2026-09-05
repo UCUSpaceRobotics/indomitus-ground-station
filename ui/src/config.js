@@ -122,7 +122,7 @@ export const DEFAULT_TOPICS = {
   /** Uncalibrated 0..1000 stick values — what the calibration wizard reads. */
   joyRaw: '/gs/joy/raw',
   /** The console dressed as an SDL gamepad, which is what the arm reads. */
-  armJoy: '/arm/joy',
+  armJoy: '/gs/arm/joy',
   cmdVel: '/rover/cmd_vel',
   servoTwist: '/servo_node/delta_twist_cmds',
   odom: '/rover/odom',

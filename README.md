@@ -102,14 +102,15 @@ The arm is driven by `gamepad_servo_node` on the rover, which reads a **canonica
 SDL gamepad**: `axes[0..5]` and `buttons[0..14]`, where an index means the same
 physical control on every device. The console is not a gamepad — it is three
 sticks and two boards of switches in whatever order they were soldered — so
-`arm_gamepad_node` assembles that layout and publishes it on `/arm/joy`.
+`arm_gamepad_node` assembles that layout and publishes it on `/gs/arm/joy`
+(the topic is relative, so it follows the `/gs` namespace `gs.launch.py` pushes).
 
 It is a separate topic from `/joy` on purpose: `/joy` carries the console's own
 raw frame, which the drive nodes and the calibration wizard read, and it is a
 different layout entirely. Point the rover's gamepad node at this one:
 
 ```bash
-ros2 launch arm_tasks gamepad.launch.py --ros-args -r joy:=/arm/joy
+ros2 launch arm_tasks gamepad.launch.py --ros-args -r joy:=/gs/arm/joy
 ```
 
 **Bind controls from the UI**, not by editing indices: open *Arm mapping* from
