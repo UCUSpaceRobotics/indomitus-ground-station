@@ -392,6 +392,38 @@ kbd {
   height: 100%;
 }
 
+.panel.is-collapsed {
+  height: auto;
+  flex: none;
+}
+
+/* Folding trigger: the whole title becomes a button so it is easy to hit. */
+.panel-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.panel-toggle:hover h2 {
+  color: var(--text);
+}
+
+.panel-caret {
+  flex: none;
+  color: var(--text-dim);
+  transition: transform 120ms ease;
+}
+
+.panel-toggle[aria-expanded='false'] .panel-caret {
+  transform: rotate(-90deg);
+}
+
 .panel-head {
   display: flex;
   align-items: center;
@@ -1371,6 +1403,11 @@ kbd {
   min-height: 0;
 }
 
+/* Log folded away: the cameras take the freed row. */
+.left-layout.is-logs-collapsed {
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
 @media (max-width: 1200px) {
   .left-layout {
     grid-template-columns: minmax(0, 1fr);
@@ -1388,6 +1425,9 @@ kbd {
   }
   .left-console {
     grid-row: 3;
+  }
+  .left-layout.is-logs-collapsed {
+    grid-template-rows: minmax(220px, 1fr) auto auto;
   }
 }
 
