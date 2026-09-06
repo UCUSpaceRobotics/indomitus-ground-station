@@ -35,6 +35,7 @@ const UNBOUND = -1;
 const MODE_FLAGS = {
   vyBind: 'vyEnabled',
   grannyBind: 'grannyMode',
+  boostBind: 'boostMode',
   muteBind: 'mute',
 };
 
@@ -422,6 +423,9 @@ export default function SettingsDialog({ open, onClose }) {
           ['granny_mode', draft.grannyMode, 'bool'],
           ['granny_switch_source', draft.grannyBind.source, 'string'],
           ['granny_switch_index', draft.grannyBind.index, 'int'],
+          ['boost_mode', draft.boostMode, 'bool'],
+          ['boost_switch_source', draft.boostBind.source, 'string'],
+          ['boost_switch_index', draft.boostBind.index, 'int'],
           ['mute', draft.mute, 'bool'],
           ['mute_switch_source', draft.muteBind.source, 'string'],
           ['mute_switch_index', draft.muteBind.index, 'int'],
@@ -452,18 +456,29 @@ export default function SettingsDialog({ open, onClose }) {
         vyEnabled: draft.vyEnabled,
         grannyBind: draft.grannyBind,
         grannyMode: draft.grannyMode,
+        boostBind: draft.boostBind,
+        boostMode: draft.boostMode,
         muteBind: draft.muteBind,
         mute: draft.mute,
       });
 
-      const saved = await callService(
-        `${draft.interpreterNode}/save_bindings`,
-        'std_srvs/srv/Trigger',
-      );
+      // Two files, because the two halves of a control scheme live on two
+      // nodes: the binds on the interpreter, the console modes on the drive
+      // node. Both are saved, or the half that was not comes back on the next
+      // restart while this dialog goes on showing what was applied — which is
+      // exactly how the modes used to be lost.
+      const [savedBinds, savedModes] = await Promise.all([
+        callService(`${draft.interpreterNode}/save_bindings`, 'std_srvs/srv/Trigger'),
+        callService(`${draft.driveNode}/save_modes`, 'std_srvs/srv/Trigger'),
+      ]);
+      const unsaved = [
+        savedBinds?.success ? '' : `binds (${savedBinds?.message || 'unknown error'})`,
+        savedModes?.success ? '' : `modes (${savedModes?.message || 'unknown error'})`,
+      ].filter(Boolean);
       setBindStatus(
-        saved?.success
-          ? { tone: 'ok', text: `${binds.length} binds applied and saved.` }
-          : { tone: 'warn', text: `Applied, but not saved: ${saved?.message || 'unknown error'}` },
+        unsaved.length
+          ? { tone: 'warn', text: `Applied, but not saved: ${unsaved.join('; ')}` }
+          : { tone: 'ok', text: `${binds.length} binds and console modes applied and saved.` },
       );
     } catch (err) {
       setBindStatus({ tone: 'crit', text: String(err.message || err) });
@@ -480,6 +495,8 @@ export default function SettingsDialog({ open, onClose }) {
     draft.vyEnabled,
     draft.grannyBind,
     draft.grannyMode,
+    draft.boostBind,
+    draft.boostMode,
     draft.muteBind,
     draft.mute,
   ]);

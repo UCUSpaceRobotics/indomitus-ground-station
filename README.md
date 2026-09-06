@@ -142,6 +142,28 @@ control that silently does nothing.
 With a bridge and the node running, `npm run check:arm` in `ui/` round-trips a
 mapping through rosbridge and puts it back as it found it.
 
+### Control scheme
+
+The settings dialog's *Apply to rover* pushes a whole control scheme at once,
+and it lands on **two** nodes:
+
+| Half | Node | Saved to | Override with |
+|---|---|---|---|
+| Rover-function binds (which switch calls which service) + the camera bits | `gs_interpreter` | `/work/config/gs_bindings.yaml` | `GS_BINDINGS_FILE` |
+| Console modes — steering mode, strafe, granny, mute, and the switch bound to each | `joy_to_cmd_vel_node` | `/work/config/gs_drive_modes.yaml` | `DRIVE_MODES_FILE` |
+
+Apply writes both, via `~/save_bindings` and `~/save_modes` respectively, and
+both nodes reload their file on startup — so a configured console keeps its
+wiring across a restart while the packages keep their shipped defaults.
+
+Only the modes an operator actually chooses are saved. Axis mapping, scales,
+deadzone and publish rate stay in the launch file: a saved copy of those would
+quietly outrank it for the rest of the console's life.
+
+A console that was muted when it was last saved comes back muted, and says so at
+`WARN` on startup — from the driver's seat a muted console is indistinguishable
+from a dead node or a dead link, so the reason has to be in the log.
+
 ### Hardware Protocol
 Both boards talk plain ASCII, and both are read by a single node,
 `console_boards`, which owns one serial port per board.

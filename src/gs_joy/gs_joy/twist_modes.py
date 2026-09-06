@@ -111,6 +111,24 @@ def apply_granny(vx, vy, wz, scale, enabled):
     return float(vx) * scale, float(vy) * scale, float(wz) * scale
 
 
+def apply_boost(vx, vy, wz, scale, enabled):
+    """Scale the whole command up for open ground.
+
+    The mirror of apply_granny, and scaled the same way — yaw included — so a
+    boost holds the arc instead of widening every turn as a side effect of
+    speeding up. Applied after the mode and after clamp_linear, which is what
+    makes it a deliberate overspeed: the boost is meant to exceed the ceiling
+    normal driving is held to, not to be clipped back to it.
+
+    Granny and boost are never both live; the caller resolves that, and granny
+    wins. See active_boost in joy_to_cmd_vel_node.
+    """
+    if not enabled:
+        return float(vx), float(vy), float(wz)
+    scale = float(scale)
+    return float(vx) * scale, float(vy) * scale, float(wz) * scale
+
+
 def apply_deadzone(value, deadzone):
     """Kill stick noise around centre, then rescale the rest to full travel.
 

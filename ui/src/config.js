@@ -194,6 +194,14 @@ function defaults() {
     /** Everything scaled down for fine work. */
     grannyBind: { source: 'switches', index: -1 },
     grannyMode: false,
+    /**
+     * Granny's mirror, x1.2 for open ground. Bound out of the box, unlike the
+     * other modes: switch 14 is the one latching control the panel has left
+     * over once the cameras, the rover functions and the arm have taken theirs.
+     * Matches boost_switch_index on joy_to_cmd_vel_node.
+     */
+    boostBind: { source: 'switches', index: 14 },
+    boostMode: false,
     /** Stop commanding the rover from this console without killing the node. */
     muteBind: { source: 'switches', index: -1 },
     mute: false,
@@ -367,6 +375,8 @@ function normalize(raw) {
     vyEnabled: Boolean(merged.vyEnabled),
     grannyBind: normalizeModeBind(merged.grannyBind),
     grannyMode: Boolean(merged.grannyMode),
+    boostBind: normalizeModeBind(merged.boostBind),
+    boostMode: Boolean(merged.boostMode),
     muteBind: normalizeModeBind(merged.muteBind),
     mute: Boolean(merged.mute),
   };

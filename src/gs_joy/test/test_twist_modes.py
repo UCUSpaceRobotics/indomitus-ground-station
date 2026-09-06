@@ -16,6 +16,7 @@ from gs_joy.twist_modes import (
     MODE_CURVATURE,
     MODE_ROW,
     apply_deadzone,
+    apply_boost,
     apply_granny,
     build_twist,
     clamp_linear,
@@ -160,6 +161,33 @@ def test_granny_preserves_the_arc():
 def test_granny_preserves_heading():
     vx, vy, _ = apply_granny(0.3, 0.4, 0.0, 0.1, True)
     assert vy / vx == pytest.approx(4 / 3)
+
+
+# ── boost ────────────────────────────────────────────────────────────────────
+
+def test_boost_off_changes_nothing():
+    assert apply_boost(0.6, -0.2, 0.9, 1.2, False) == (0.6, -0.2, 0.9)
+
+
+def test_boost_scales_every_component():
+    vx, vy, wz = apply_boost(0.5, -0.2, 0.8, 1.2, True)
+    assert (vx, vy, wz) == pytest.approx((0.6, -0.24, 0.96))
+
+
+def test_boost_preserves_the_arc():
+    # Same reason granny scales yaw: a boost that scaled only translation would
+    # widen every turn as a side effect of speeding up.
+    vx, vy, wz = curve(0.5, 0.0, 0.5)
+    bx, by, bz = apply_boost(vx, vy, wz, 1.2, True)
+    assert bz / bx == pytest.approx(wz / vx)
+
+
+def test_boost_goes_above_the_clamp():
+    # The point of the mode: it is applied after clamp_linear, so it commands
+    # above the ceiling normal driving is held to rather than being clipped
+    # back to it.
+    vx, vy = clamp_linear(1.0, 0.0, 1.0)
+    assert apply_boost(vx, vy, 0.0, 1.2, True)[0] == pytest.approx(1.2)
 
 
 # ── strafe off: the reverse mirror ───────────────────────────────────────────

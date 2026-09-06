@@ -75,7 +75,13 @@ class Function:
 #: rover_teleop/drive_power_node, lights by rover_peripherals.
 FUNCTIONS = (
     Function('drive_power', 'Drive power', '/rover/drive/power', '/rover/drive/power/toggle'),
-    Function('drive_compact', 'Drive compact', '/rover/drive/compact', '/rover/drive/compact/toggle'),
+    # Absolute form only, though drive_power_node advertises the toggle twin
+    # too. Both of this console's boards latch, so a bind here always knows its
+    # own position, and inverting the rover's state on every edge instead meant
+    # the switch and compact mode drifted apart the moment anything else -- the
+    # onboard gamepad, a reconnect, a missed call -- moved one of them. SetBool
+    # re-asserts the position on every edge, so they cannot disagree for long.
+    Function('drive_compact', 'Drive compact', '/rover/drive/compact', ''),
     # No absolute form: clearing a fault is an action, not a state.
     Function('drive_clear_errors', 'Clear drive errors', '', '/rover/drive/clear_errors'),
     Function('spotlight', 'Spotlight', '/rover/lights/spotlight', '/rover/lights/spotlight/toggle'),

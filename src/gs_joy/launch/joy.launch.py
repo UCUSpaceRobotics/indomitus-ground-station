@@ -52,6 +52,17 @@ def generate_launch_description():
         description='YAML file the settings dialog saves rover-function binds to'
     )
 
+    # The other half of what the settings dialog applies. The binds above live
+    # on gs_interpreter; the steering mode, strafe, granny and mute are
+    # parameters of joy_to_cmd_vel_node, and until this file existed they were
+    # the one part of a control scheme that did not survive a restart.
+    drive_modes_file_arg = DeclareLaunchArgument(
+        'drive_modes_file',
+        default_value=EnvironmentVariable(
+            'DRIVE_MODES_FILE', default_value='/work/config/gs_drive_modes.yaml'),
+        description='YAML file the settings dialog saves the console modes to'
+    )
+
     arm_joy_topic_arg = DeclareLaunchArgument(
         'arm_joy_topic',
         default_value=EnvironmentVariable('ARM_JOY_TOPIC', default_value='arm/joy'),
@@ -77,6 +88,7 @@ def generate_launch_description():
         calibration_file_arg,
         arm_bindings_file_arg,
         gs_bindings_file_arg,
+        drive_modes_file_arg,
         arm_joy_topic_arg,
         # One node, both boards. They are two USB ports but one panel, and
         # the shared serial reader is what lets either board reconnect on its
@@ -131,6 +143,11 @@ def generate_launch_description():
                 # when it is 1. Both nodes read the same switch.
                 'mode_switch_index': 0,
                 'mode_switch_value': 0,
+                # Where save_modes writes and where startup restores from. The
+                # steering mode, strafe, granny and mute defaults stay in the
+                # node; this file only overrides them once a console has been
+                # configured, so a fresh checkout still comes up on 'row'.
+                'modes_file': LaunchConfiguration('drive_modes_file'),
             }],
             remappings=[
                 # /cmd_vel is twist_mux's OUTPUT on the rover. External sources
