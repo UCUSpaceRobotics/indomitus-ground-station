@@ -323,6 +323,9 @@ const LEGACY_TOPICS = {
   switches: { '/switches': '/gs/switches' },
   joy: { '/joy': '/gs/joy' },
   joyRaw: { '/joy/raw': '/gs/joy/raw' },
+  // arm_gamepad_node's output followed the same move: its topic is relative
+  // now, so under gs_bringup's namespace it publishes /gs/arm/joy.
+  armJoy: { '/arm/joy': '/gs/arm/joy' },
   // The same story one namespace over: rover.launch.py pushed every rover node
   // and topic under /rover, so a console that saved its topics before that is
   // still subscribing to names nothing publishes.

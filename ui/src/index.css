@@ -836,8 +836,53 @@ kbd {
 .feed-retry {
   position: absolute;
   top: 8px;
-  left: 8px;
+  /* Clear of the stream switch, which owns the top-left corner. */
+  left: 44px;
   z-index: 1;
+}
+
+/* The per-camera stream switch. Overlaid like the rotate button, so switching a
+   feed off costs the pane no space and moves nothing. Held back until hover for
+   the same reason rotate is — except when the feed is off, where it is the only
+   way back and has to be visible. */
+.feed-power {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.feed:hover .feed-power,
+.feed-power:focus-visible,
+.feed-power.is-off {
+  opacity: 1;
+}
+
+.feed-power.is-off {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+/* Thumbnails have no room for a full control; the switch shrinks rather than
+   disappearing, so every camera in the strip can still be silenced. */
+.feed-thumb .feed-power {
+  top: 4px;
+  left: 4px;
+  width: 20px;
+  height: 17px;
+  border-radius: 5px;
 }
 
 /* Thumbnails are too small for the badge, so they get a corner mark instead. */

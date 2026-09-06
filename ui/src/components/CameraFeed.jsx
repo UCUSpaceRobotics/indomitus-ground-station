@@ -1,10 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CameraOff, Image as ImageIcon, RefreshCw, Radio, RotateCw, Save } from 'lucide-react';
+import {
+  CameraOff,
+  Image as ImageIcon,
+  RefreshCw,
+  Radio,
+  RotateCw,
+  Save,
+  Video,
+  VideoOff,
+} from 'lucide-react';
 import { VIDEO_MODES, isDirectUrl, mjpegUrl, placeholderFor, snapshotUrl, useConfig } from '../config';
 import { useTopic, useTick, isStale } from '../ros/useTopic';
 import { fmtAge, fmtNumber, stampToMs } from '../lib/format';
 import { rotateCamera, useRotation } from '../lib/rotation';
 import { paintMirror, drawMirror, subscribeMirror } from '../lib/frameMirror';
+import { toggleVideo, useVideoOn } from '../lib/videoStream';
 import { blobFromBase64, saveFrameBlob, saveMjpegFrame } from '../lib/saveFrame';
 
 const RETRY_BASE_MS = 1000;
@@ -129,6 +139,9 @@ export default function CameraFeed({ camera, variant = 'main', className = '' })
   // Shared across every pane showing this camera — thumbnail, main and the
   // fullscreen route rotate together.
   const rotation = useRotation(camera.id);
+  // Switched off means off at the source: no <img>, no subscription, so this
+  // camera costs the link nothing until it is switched back on.
+  const videoOn = useVideoOn(camera.id);
 
   const handleStatus = useCallback((next) => setHttpStatus(next), []);
   const reload = useCallback(() => {
@@ -149,7 +162,7 @@ export default function CameraFeed({ camera, variant = 'main', className = '' })
   // websocket load, never link bandwidth. Thumbnails stay at 1 fps.
   const frameIntervalMs = isThumb ? 1000 : 33;
   const rosFeed = useTopic(`${camera.topic}/compressed`, 'sensor_msgs/CompressedImage', {
-    enabled: rosMode,
+    enabled: rosMode && videoOn,
     throttleMs: frameIntervalMs,
     queueLength: 1,
     renderMs: 0,
@@ -201,12 +214,20 @@ export default function CameraFeed({ camera, variant = 'main', className = '' })
   if (rosMode) {
     status = rosFeed.receivedAt === 0 ? 'connecting' : rosStale ? 'error' : 'live';
   }
+  // Its own status, not 'error': a switched-off camera is a choice, and must
+  // not read as a feed that has failed — nor trip the retry button.
+  if (!videoOn) status = 'off';
 
   const stampMs = stampToMs(rosFeed.message?.header?.stamp);
   const frameAgeMs = rosFeed.receivedAt ? now - rosFeed.receivedAt : null;
 
   let media = null;
-  if (rosMode) {
+  if (!videoOn) {
+    // Nothing mounted at all. Both transports tear down on unmount — the <img>
+    // drops the multipart connection, useTopic unsubscribes — which is what
+    // actually stops the traffic.
+    media = null;
+  } else if (rosMode) {
     if (rosFeed.message?.data) {
       const mime = String(rosFeed.message.format || '').includes('png') ? 'image/png' : 'image/jpeg';
       media = (
@@ -230,7 +251,7 @@ export default function CameraFeed({ camera, variant = 'main', className = '' })
   // A stand-in still, shown only while the real feed is down. Always badged, so
   // it cannot be read as live video.
   const placeholder = placeholderFor(camera);
-  const showStill = status !== 'live' && Boolean(placeholder);
+  const showStill = videoOn && status !== 'live' && Boolean(placeholder);
 
   return (
     <div
@@ -244,11 +265,15 @@ export default function CameraFeed({ camera, variant = 'main', className = '' })
 
       {status !== 'live' && !showStill && (
         <div className="feed-placeholder">
-          <CameraOff size={isThumb ? 18 : 34} />
+          {videoOn ? <CameraOff size={isThumb ? 18 : 34} /> : <VideoOff size={isThumb ? 18 : 34} />}
           <span className="feed-placeholder-text">
-            {status === 'connecting' ? 'Acquiring…' : 'No signal'}
+            {!videoOn ? 'Video off' : status === 'connecting' ? 'Acquiring…' : 'No signal'}
           </span>
-          {!isThumb && <span className="mono feed-placeholder-topic">{camera.topic}</span>}
+          {!isThumb && (
+            <span className="mono feed-placeholder-topic">
+              {videoOn ? camera.topic : 'not streaming — switch on to receive'}
+            </span>
+          )}
         </div>
       )}
 
@@ -261,6 +286,37 @@ export default function CameraFeed({ camera, variant = 'main', className = '' })
           </span>
         </div>
       )}
+
+      {/* The traffic switch. A <span role="switch"> rather than a <button>:
+          grid tiles and thumbnails are themselves buttons (see CameraGrid), and
+          a nested <button> is what browsers actually mis-render. Absolutely
+          positioned like the rotate and retry controls, so no pane changes size
+          and nothing moves. */}
+      <span
+        role="switch"
+        tabIndex={0}
+        aria-checked={videoOn}
+        className={`feed-power ${videoOn ? 'is-on' : 'is-off'}`}
+        onClick={(event) => {
+          // Tiles switch the view on click; flipping the stream must not.
+          event.stopPropagation();
+          toggleVideo(camera.id);
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          event.stopPropagation();
+          toggleVideo(camera.id);
+        }}
+        title={
+          videoOn
+            ? `Stop receiving ${camera.name} (saves link bandwidth)`
+            : `Start receiving ${camera.name}`
+        }
+        aria-label={`${camera.name} video stream`}
+      >
+        {videoOn ? <Video size={isThumb ? 11 : 13} /> : <VideoOff size={isThumb ? 11 : 13} />}
+      </span>
 
       {/* Rotates the picture, not the camera — see lib/rotation.js. Bottom
           left, so it never lands on the Retry button above it. Thumbnails are
@@ -280,7 +336,7 @@ export default function CameraFeed({ camera, variant = 'main', className = '' })
 
       {/* Only in the main pane: tiles are themselves buttons, and a button
           inside a button is invalid. */}
-      {status !== 'live' && variant === 'main' && !rosMode && (
+      {videoOn && status !== 'live' && variant === 'main' && !rosMode && (
         <button type="button" className="btn btn-sm feed-retry" onClick={reload}>
           <RefreshCw size={13} /> Retry
         </button>
