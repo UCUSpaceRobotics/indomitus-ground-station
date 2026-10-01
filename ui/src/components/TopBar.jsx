@@ -3,6 +3,7 @@ import { ArrowLeft, Moon, RefreshCw, Settings, Sun } from 'lucide-react';
 import { updateConfig, useConfig } from '../config';
 import { useRos } from '../ros/context';
 import { fmtAge, NO_VALUE } from '../lib/format';
+import DatasetControls from './DatasetControls';
 
 const STATUS_TEXT = {
   connected: 'Connected',
@@ -58,6 +59,7 @@ export default function TopBar({ title, subtitle, onOpenSettings, showBack = tru
       </div>
 
       <div className="topbar-right">
+        <DatasetControls />
         <ConnectionBadge />
         <button
           type="button"

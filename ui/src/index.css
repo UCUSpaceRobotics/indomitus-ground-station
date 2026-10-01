@@ -315,6 +315,46 @@ kbd {
   white-space: nowrap;
 }
 
+/* --------------------------------------------------------- dataset capture */
+
+.dataset-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dataset-note {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.dataset-note.is-crit {
+  color: var(--crit);
+}
+
+.dataset-rec-dot {
+  color: var(--text-faint);
+}
+
+.btn.is-rec {
+  background: var(--crit-soft);
+  border-color: var(--crit);
+  color: var(--crit);
+}
+
+.btn.is-rec .dataset-rec-dot {
+  color: var(--crit);
+  fill: var(--crit);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.dataset-saved {
+  font-weight: 500;
+  opacity: 0.8;
+}
+
 /* -------------------------------------------------------------- link badge */
 
 .link-badge {

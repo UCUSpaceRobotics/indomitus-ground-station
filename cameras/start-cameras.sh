@@ -86,6 +86,10 @@ DEFAULT_FORMAT=${DEFAULT_FORMAT:-YUYV}
 # software (see split_stereo() there). 'both' serves the raw joined frame
 # unchanged. Per-camera override in --config, same as res/fps/quality/format.
 DEFAULT_VIEW=${DEFAULT_VIEW:-both}
+# Where /capture and /record (the dataset endpoints, driven by the DualSense and
+# the UI) write frames on the Jetson. Empty = the server's own default,
+# ~/dataset. In container mode the path is inside $CAM_CONTAINER.
+SAVE_DIR=${SAVE_DIR:-}
 # Dedicated remote directory (relative to $HOME) holding camera_mjpeg_server.py
 # and, if present, a venv at .camera-venv with cv2+numpy — see CAM_VENV_PY below.
 CAM_REMOTE_DIR=${CAM_REMOTE_DIR:-cameras}
@@ -578,11 +582,11 @@ while IFS='|' read -r NAME DEV UPATH SPEED CARD RES FPS QUALITY FORMAT VIEW PORT
     if [ "${CAM_RUNTIME:-host}" = container ]; then
         nexec "$CAM_PY \
             --device $DEV --width ${RES%x*} --height ${RES#*x} \
-            --fps $FPS --quality $QUALITY --format $FORMAT --view $VIEW --port $PORT --name $NAME"
+            --fps $FPS --quality $QUALITY --format $FORMAT --view $VIEW --port $PORT --name $NAME${SAVE_DIR:+ --save-dir $SAVE_DIR}"
     else
         nexec "nohup $CAM_PY \
             --device $DEV --width ${RES%x*} --height ${RES#*x} \
-            --fps $FPS --quality $QUALITY --format $FORMAT --view $VIEW --port $PORT --name $NAME \
+            --fps $FPS --quality $QUALITY --format $FORMAT --view $VIEW --port $PORT --name $NAME${SAVE_DIR:+ --save-dir $SAVE_DIR} \
             >$LOG 2>&1 & true"
     fi
     STARTED="$STARTED$NAME|$DEV|$PORT|$LOG
@@ -640,3 +644,6 @@ done
 say ""
 say "Settings dialog -> Cameras -> paste one into each row's \"Image topic / URL\" box."
 say "Single frames, for a quick eyeball: swap action=stream for action=snapshot."
+say ""
+say "Dataset (DualSense 14 = capture, 15 = record 1/s, or the UI's dataset controls):"
+say "  frames land on the Jetson in ${SAVE_DIR:-~/dataset}/<date>/<camera>/"

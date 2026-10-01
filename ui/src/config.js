@@ -514,6 +514,20 @@ export function isDirectUrl(topic) {
   return /^https?:\/\//i.test(String(topic || ''));
 }
 
+/**
+ * `http://host:port` of a direct-URL camera's own server, where its /health,
+ * /capture and /record live (cameras/camera_mjpeg_server.py). Null for a ROS
+ * topic: web_video_server has no such endpoints.
+ */
+export function cameraBaseUrl(topic) {
+  if (!isDirectUrl(topic)) return null;
+  try {
+    return new URL(topic).origin;
+  } catch {
+    return null;
+  }
+}
+
 /** Builds the `web_video_server` stream URL for a camera. */
 export function mjpegUrl(config, topic, { quality, width } = {}) {
   if (isDirectUrl(topic)) return topic;
