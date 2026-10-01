@@ -39,6 +39,15 @@ import numpy as np
 
 BOUNDARY = 'cameramjpegframe'
 
+# Frames thrown away after every open, before anything is served or saved. The
+# Arducams on SuperSpeed hand back an all-zero buffer (flat green once
+# converted) as their first frame on every other open: a stream opens once and
+# hides it in a fraction of a second, but /capture on an idle camera opens it
+# for exactly one frame, so half the dataset came out green.
+WARMUP_FRAMES = 3
+# This many blank frames in a row is a wedged camera, not a slow start: reopen.
+MAX_BLANK_RUN = 30
+
 
 def enumerate_modes(device):
     """{(w, h): [fps, ...]} the device actually offers, via v4l2-ctl."""
@@ -92,6 +101,16 @@ def pick_mode(modes, want_w, want_h, want_fps):
     return size[0], size[1], fps, '; '.join(notes) or 'exact'
 
 
+def is_blank(frame):
+    """True for a frame with no picture in it: every channel one flat value.
+
+    That is what an all-zero YUYV buffer converts to (0, 153, 0), and no real
+    scene is that uniform. Checked on a sparse grid, so it costs microseconds.
+    """
+    sample = frame[::16, ::16]
+    return int(np.ptp(sample, axis=(0, 1)).max()) <= 2
+
+
 def split_stereo(frame, view):
     """Cut a side-by-side stereo frame (left|right eye, concatenated on the
     width) down to one eye. ZED-style cameras report only the combined
@@ -131,6 +150,7 @@ class Camera:
         self.mode = 'idle'
         self.frames = 0
         self.errors = 0
+        self.blank = 0
         self.started = time.time()
 
     @property
@@ -177,9 +197,16 @@ class Camera:
 
     def run(self):
         cap = None
+        warmup = 0
+        blank_run = 0
         while not self._stop.is_set():
-            # No viewers: stay closed and idle rather than capturing for
-            # nobody. Woken by add_viewer() or stop().
+            # No viewers: close, and stay closed and idle rather than capturing
+            # for nobody. Here at the top so the warm-up and blank-frame skips
+            # below cannot bypass it. Woken by add_viewer() or stop().
+            if self._viewers == 0 and cap is not None:
+                cap.release()
+                cap = None
+                self.mode = 'idle'
             with self._cond:
                 while self._viewers == 0 and not self._stop.is_set():
                     self._cond.wait()
@@ -189,9 +216,21 @@ class Camera:
             try:
                 if cap is None:
                     cap = self.open()
+                    warmup = WARMUP_FRAMES
+                    blank_run = 0
                 ok, frame = cap.read()
                 if not ok:
                     raise RuntimeError('read failed')
+                if warmup > 0:
+                    warmup -= 1
+                    continue
+                if is_blank(frame):
+                    self.blank += 1
+                    blank_run += 1
+                    if blank_run >= MAX_BLANK_RUN:
+                        raise RuntimeError('%d blank frames in a row' % blank_run)
+                    continue
+                blank_run = 0
                 frame = split_stereo(frame, self.view)
                 ok, buf = cv2.imencode(
                     '.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.quality])
@@ -214,11 +253,6 @@ class Camera:
                     cap = None
                 time.sleep(1.0)
                 continue
-
-            if self._viewers == 0 and cap is not None:
-                cap.release()
-                cap = None
-                self.mode = 'idle'
         if cap is not None:
             cap.release()
 
@@ -385,9 +419,9 @@ class Handler(BaseHTTPRequestHandler):
         ds = self.dataset
         up = time.time() - cam.started
         self._text(200, 'ok name=%s mode=%s viewers=%d frames=%d errors=%d uptime=%.0fs '
-                        'fps=%.1f recording=%d saved=%d\n'
+                        'fps=%.1f recording=%d saved=%d blank=%d\n'
                    % (cam.name, cam.mode, cam.viewers, cam.frames, cam.errors, up,
-                      cam.frames / up if up else 0, ds.recording, ds.saved))
+                      cam.frames / up if up else 0, ds.recording, ds.saved, cam.blank))
 
     def _capture(self):
         path = self.dataset.capture()
