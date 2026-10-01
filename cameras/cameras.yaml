@@ -32,6 +32,16 @@ cameras:
     fps: 15
     quality: 5
 
+  # YUYV:
+  # 1920x1200 @50/30/15fps
+  # 960x600 @80/60/30/15fps
+  arducam-fr-bottom:
+    device: /dev/arducam-fr-bottom
+    port: 8093   # persistent: http://10.42.0.1:8093/arducam-fr-bottom?action=stream
+    res: 960x600
+    fps: 15
+    quality: 60
+
   # MJPG:
   # 1920x1080 @30fps
   # 640x480 @30fps
