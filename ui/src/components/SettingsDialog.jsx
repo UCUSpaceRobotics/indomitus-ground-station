@@ -429,6 +429,9 @@ export default function SettingsDialog({ open, onClose }) {
           ['mute', draft.mute, 'bool'],
           ['mute_switch_source', draft.muteBind.source, 'string'],
           ['mute_switch_index', draft.muteBind.index, 'int'],
+          ['max_linear_speed', draft.maxLinearSpeed],
+          ['granny_speed_scale', draft.grannySpeedScale],
+          ['boost_speed_scale', draft.boostSpeedScale],
         ]),
       );
       const modeRejected = (modeResponse?.results || []).filter((r) => !r.successful);
@@ -460,6 +463,9 @@ export default function SettingsDialog({ open, onClose }) {
         boostMode: draft.boostMode,
         muteBind: draft.muteBind,
         mute: draft.mute,
+        maxLinearSpeed: draft.maxLinearSpeed,
+        grannySpeedScale: draft.grannySpeedScale,
+        boostSpeedScale: draft.boostSpeedScale,
       });
 
       // Two files, because the two halves of a control scheme live on two
@@ -499,6 +505,9 @@ export default function SettingsDialog({ open, onClose }) {
     draft.boostMode,
     draft.muteBind,
     draft.mute,
+    draft.maxLinearSpeed,
+    draft.grannySpeedScale,
+    draft.boostSpeedScale,
   ]);
 
   const save = () => {
@@ -966,6 +975,36 @@ export default function SettingsDialog({ open, onClose }) {
               These are console-side settings on <span className="mono">joy_to_cmd_vel_node</span>,
               not rover services. The last column is what applies when no switch is bound — and
               what the node falls back to if a bound board stops reporting.
+            </p>
+
+            <div className="settings-subhead">
+              <h4>Speed limits</h4>
+            </div>
+            <div className="bind-table">
+              {[
+                ['maxLinearSpeed', 'Max speed (m/s)', 3, 0.1],
+                ['grannySpeedScale', 'Granny multiplier', 1, 0.05],
+                ['boostSpeedScale', 'Boost multiplier', 10, 0.5],
+              ].map(([key, label, max, step]) => (
+                <label key={key} className="field">
+                  <span>{label}</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={max}
+                    step={step}
+                    value={draft[key]}
+                    onChange={(event) =>
+                      setDraft((prev) => ({ ...prev, [key]: Number(event.target.value) }))
+                    }
+                  />
+                </label>
+              ))}
+            </div>
+            <p className="field-hint">
+              Applied with the binds above. Boost multiplies after the max-speed clamp, so
+              max speed &times; boost is what the console asks the rover for; the rover&apos;s own
+              controller limit still caps it.
             </p>
 
             <div className="settings-subhead">

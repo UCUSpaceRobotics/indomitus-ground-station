@@ -205,6 +205,13 @@ function defaults() {
     /** Stop commanding the rover from this console without killing the node. */
     muteBind: { source: 'switches', index: -1 },
     mute: false,
+    /**
+     * Speed limits on joy_to_cmd_vel_node. Defaults match the node's own; the
+     * node bounds them again (max 3 m/s, granny 1.0, boost 10).
+     */
+    maxLinearSpeed: 1.0,
+    grannySpeedScale: 0.1,
+    boostSpeedScale: 5.0,
   };
 }
 
@@ -382,7 +389,15 @@ function normalize(raw) {
     boostMode: Boolean(merged.boostMode),
     muteBind: normalizeModeBind(merged.muteBind),
     mute: Boolean(merged.mute),
+    maxLinearSpeed: finiteOr(merged.maxLinearSpeed, base.maxLinearSpeed),
+    grannySpeedScale: finiteOr(merged.grannySpeedScale, base.grannySpeedScale),
+    boostSpeedScale: finiteOr(merged.boostSpeedScale, base.boostSpeedScale),
   };
+}
+
+function finiteOr(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 
 let current = normalize({ ...readStorage(), ...readQuery() });

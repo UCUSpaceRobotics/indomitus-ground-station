@@ -36,12 +36,24 @@ MODES_NODE_KEY = '/**'
 #: Keys read back from an older file that named the node explicitly.
 LEGACY_MODES_KEYS = (MODES_NODE_KEY, '/gs/joy_to_cmd_vel_node', 'joy_to_cmd_vel_node')
 
-#: The console modes the settings dialog owns, and the only parameters
-#: `save_modes` writes. Everything else on this node is tuning that belongs in
-#: the launch file - axis mapping, scales, deadzone, publish rate - not state an
-#: operator flips mid-run, and a saved copy of it would quietly outrank the
-#: launch file for the rest of the console's life.
+#: Speed ceilings the settings dialog may set, as the largest value each
+#: parameter accepts. A typo in a text box must not command a runaway rover, so
+#: these bound the UI even though the launch file can still go further.
+SPEED_PARAM_LIMITS = {
+    'max_linear_speed': 3.0,
+    'granny_speed_scale': 1.0,
+    'boost_speed_scale': 10.0,
+}
+
+#: The console modes and speed limits the settings dialog owns, and the only
+#: parameters `save_modes` writes. Everything else on this node is tuning that
+#: belongs in the launch file - axis mapping, scales, deadzone, publish rate -
+#: not state an operator flips mid-run, and a saved copy of it would quietly
+#: outrank the launch file for the rest of the console's life.
 SAVED_MODE_PARAMS = (
+    'max_linear_speed',
+    'granny_speed_scale',
+    'boost_speed_scale',
     'twist_mode',
     'twist_mode_switch_source',
     'twist_mode_switch_index',
@@ -338,6 +350,13 @@ class JoyToCmdVelNode(Node):
             return str(value)
         if name.endswith('_index'):
             return int(value)
+        if name in SPEED_PARAM_LIMITS:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f'{value!r} is not a number')
+            if not 0.0 <= float(value) <= SPEED_PARAM_LIMITS[name]:
+                raise ValueError(
+                    f'{value!r} is outside 0..{SPEED_PARAM_LIMITS[name]}')
+            return float(value)
         if not isinstance(value, bool):
             raise ValueError(f'{value!r} is not true or false')
         return value
@@ -505,6 +524,12 @@ class JoyToCmdVelNode(Node):
                 if param.value not in MODES:
                     return SetParametersResult(
                         successful=False, reason=f'twist_mode must be one of {MODES}')
+            elif param.name in SPEED_PARAM_LIMITS:
+                limit = SPEED_PARAM_LIMITS[param.name]
+                if not 0.0 <= float(param.value) <= limit:
+                    return SetParametersResult(
+                        successful=False,
+                        reason=f'{param.name} must be in [0.0, {limit}]')
             elif param.name == 'deadzone':
                 if not 0.0 <= float(param.value) < 1.0:
                     return SetParametersResult(
