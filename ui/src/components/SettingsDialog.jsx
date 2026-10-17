@@ -14,6 +14,7 @@ import {
   updateConfig,
   useConfig,
 } from '../config';
+import * as ROSLIB from 'roslib';
 import { useRos } from '../ros/context';
 import { parameterRequest, useServiceCaller } from '../ros/useService';
 import {
@@ -197,7 +198,11 @@ export default function SettingsDialog({ open, onClose }) {
   const scanTopics = useCallback(() => {
     if (!ros) return;
     setScanState('scanning');
-    ros.getTopics(
+    // Absolute name on purpose: roslib's getTopics sends a relative
+    // 'rosapi/topics', which rosbridge resolves under its own /gs namespace
+    // to /gs/rosapi/topics. rosapi serves /rosapi/* whatever namespace it runs in.
+    new ROSLIB.Service({ ros, name: '/rosapi/topics', serviceType: 'rosapi/Topics' }).callService(
+      {},
       (result) => {
         const names = Array.isArray(result?.topics) ? [...result.topics].sort() : [];
         setTopicNames(names);
