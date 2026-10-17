@@ -47,6 +47,14 @@ const MODE_FLAGS = {
  */
 const CAMERA_SAVE_DELAY = 600;
 
+/** The "Calls" cell for a console mode, with the live multiplier for the speed modes. */
+const modeCalls = (mode, draft) =>
+  mode.key === 'grannyBind'
+    ? `speed \u00d7${draft.grannySpeedScale}`
+    : mode.key === 'boostBind'
+      ? `speed \u00d7${draft.boostSpeedScale}`
+      : mode.calls;
+
 const sameCameras = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 const TOPIC_LABELS = {
@@ -945,7 +953,7 @@ export default function SettingsDialog({ open, onClose }) {
                   >
                     <span className="fn-name">{mode.name}</span>
                     <span className="mono muted bind-call">
-                      {mode.calls}
+                      {modeCalls(mode, draft)}
                       <em className="bind-kind">local</em>
                     </span>
                     <span className="fn-bound">

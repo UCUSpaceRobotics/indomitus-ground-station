@@ -195,7 +195,7 @@ function defaults() {
     grannyBind: { source: 'switches', index: -1 },
     grannyMode: false,
     /**
-     * Granny's mirror, x1.2 for open ground. Bound out of the box, unlike the
+     * Granny's mirror, faster for open ground (multiplier: boostSpeedScale). Bound out of the box, unlike the
      * other modes: switch 14 is the one latching control the panel has left
      * over once the cameras, the rover functions and the arm have taken theirs.
      * Matches boost_switch_index on joy_to_cmd_vel_node.
@@ -211,7 +211,7 @@ function defaults() {
      */
     maxLinearSpeed: 0.5,
     grannySpeedScale: 0.1,
-    boostSpeedScale: 5.0,
+    boostSpeedScale: 1.2,
   };
 }
 
