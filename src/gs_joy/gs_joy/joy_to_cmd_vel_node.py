@@ -41,6 +41,8 @@ LEGACY_MODES_KEYS = (MODES_NODE_KEY, '/gs/joy_to_cmd_vel_node', 'joy_to_cmd_vel_
 #: these bound the UI even though the launch file can still go further.
 SPEED_PARAM_LIMITS = {
     'max_linear_speed': 3.0,
+    'linear_x_scale': 3.0,
+    'linear_y_scale': 3.0,
     'granny_speed_scale': 1.0,
     'boost_speed_scale': 10.0,
 }
@@ -52,6 +54,8 @@ SPEED_PARAM_LIMITS = {
 #: outrank the launch file for the rest of the console's life.
 SAVED_MODE_PARAMS = (
     'max_linear_speed',
+    'linear_x_scale',
+    'linear_y_scale',
     'granny_speed_scale',
     'boost_speed_scale',
     'twist_mode',

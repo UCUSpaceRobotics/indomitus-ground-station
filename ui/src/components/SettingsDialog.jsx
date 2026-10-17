@@ -76,6 +76,7 @@ export default function SettingsDialog({ open, onClose }) {
   const [topicNames, setTopicNames] = useState([]);
   const [scanState, setScanState] = useState('idle');
   const [bindStatus, setBindStatus] = useState(null);
+  const [speedStatus, setSpeedStatus] = useState(null);
   const [cameraSave, setCameraSave] = useState('idle');
   const [screenshotDirName, setScreenshotDirName] = useState(null);
   const [screenshotError, setScreenshotError] = useState(null);
@@ -434,7 +435,11 @@ export default function SettingsDialog({ open, onClose }) {
           ['mute', draft.mute, 'bool'],
           ['mute_switch_source', draft.muteBind.source, 'string'],
           ['mute_switch_index', draft.muteBind.index, 'int'],
+          // Full stick is linear_*_scale, and max_linear_speed only clamps it,
+          // so all three move together or the setting changes nothing.
           ['max_linear_speed', draft.maxLinearSpeed],
+          ['linear_x_scale', draft.maxLinearSpeed],
+          ['linear_y_scale', draft.maxLinearSpeed],
           ['granny_speed_scale', draft.grannySpeedScale],
           ['boost_speed_scale', draft.boostSpeedScale],
         ]),
@@ -510,6 +515,52 @@ export default function SettingsDialog({ open, onClose }) {
     draft.boostMode,
     draft.muteBind,
     draft.mute,
+    draft.maxLinearSpeed,
+    draft.grannySpeedScale,
+    draft.boostSpeedScale,
+  ]);
+
+  const applySpeeds = useCallback(async () => {
+    setSpeedStatus({ tone: 'muted', text: 'Applying…' });
+    try {
+      const response = await callService(
+        `${draft.driveNode}/set_parameters`,
+        'rcl_interfaces/srv/SetParameters',
+        parameterRequest([
+          // Full stick is linear_*_scale, and max_linear_speed only clamps it,
+          // so all three move together or the setting changes nothing.
+          ['max_linear_speed', draft.maxLinearSpeed],
+          ['linear_x_scale', draft.maxLinearSpeed],
+          ['linear_y_scale', draft.maxLinearSpeed],
+          ['granny_speed_scale', draft.grannySpeedScale],
+          ['boost_speed_scale', draft.boostSpeedScale],
+        ]),
+      );
+      const rejected = (response?.results || []).filter((r) => !r.successful);
+      if (rejected.length) {
+        setSpeedStatus({
+          tone: 'crit',
+          text: rejected.map((r) => r.reason).join('; ') || 'Rejected by the node',
+        });
+        return;
+      }
+      updateConfig({
+        maxLinearSpeed: draft.maxLinearSpeed,
+        grannySpeedScale: draft.grannySpeedScale,
+        boostSpeedScale: draft.boostSpeedScale,
+      });
+      const saved = await callService(`${draft.driveNode}/save_modes`, 'std_srvs/srv/Trigger');
+      setSpeedStatus(
+        saved?.success
+          ? { tone: 'ok', text: 'Speed limits applied and saved.' }
+          : { tone: 'warn', text: `Applied, but not saved: ${saved?.message || 'unknown error'}` },
+      );
+    } catch (err) {
+      setSpeedStatus({ tone: 'crit', text: String(err.message || err) });
+    }
+  }, [
+    callService,
+    draft.driveNode,
     draft.maxLinearSpeed,
     draft.grannySpeedScale,
     draft.boostSpeedScale,
@@ -984,7 +1035,21 @@ export default function SettingsDialog({ open, onClose }) {
 
             <div className="settings-subhead">
               <h4>Speed limits</h4>
+              <div className="settings-subhead-actions">
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={applySpeeds}
+                  disabled={!connected}
+                  title={connected ? '' : 'rosbridge is not connected'}
+                >
+                  Apply speeds
+                </button>
+              </div>
             </div>
+            {speedStatus && (
+              <p className={`field-hint is-${speedStatus.tone}`}>{speedStatus.text}</p>
+            )}
             <div className="bind-table">
               {[
                 ['maxLinearSpeed', 'Max speed (m/s)', 3, 0.1],
@@ -1007,7 +1072,7 @@ export default function SettingsDialog({ open, onClose }) {
               ))}
             </div>
             <p className="field-hint">
-              Applied with the binds above. Boost multiplies after the max-speed clamp, so
+              Boost multiplies after the max-speed clamp, so
               max speed &times; boost is what the console asks the rover for; the rover&apos;s own
               controller limit still caps it.
             </p>

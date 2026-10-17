@@ -206,10 +206,10 @@ function defaults() {
     muteBind: { source: 'switches', index: -1 },
     mute: false,
     /**
-     * Speed limits on joy_to_cmd_vel_node. Defaults match the node's own; the
+     * Speed limits on joy_to_cmd_vel_node. Speed at full stick, so it matches linear_x_scale (0.5); the
      * node bounds them again (max 3 m/s, granny 1.0, boost 10).
      */
-    maxLinearSpeed: 1.0,
+    maxLinearSpeed: 0.5,
     grannySpeedScale: 0.1,
     boostSpeedScale: 5.0,
   };
