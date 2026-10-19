@@ -161,7 +161,7 @@ export default function CameraFeed({ camera, variant = 'main', className = '' })
   // rover has already put them on the link — so this trades browser and
   // websocket load, never link bandwidth. Thumbnails stay at 1 fps.
   const frameIntervalMs = isThumb ? 1000 : 33;
-  const rosFeed = useTopic(`${camera.topic}/compressed`, 'sensor_msgs/CompressedImage', {
+  const rosFeed = useTopic(camera.topic, 'sensor_msgs/CompressedImage', {
     enabled: rosMode && videoOn,
     throttleMs: frameIntervalMs,
     queueLength: 1,

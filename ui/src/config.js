@@ -505,8 +505,12 @@ const PASSTHROUGH_TYPE = 'ros_compressed';
 // A '/' is legal in a query string unescaped, and a valid ROS topic name
 // contains nothing else that needs escaping, so build the query by hand.
 function videoQuery(topic, quality, width) {
+  // web_video_server and the rosbridge feed both append their own transport
+  // suffix, so a camera entered as '.../compressed' would subscribe a raw
+  // Image to a name that only carries CompressedImage.
+  const base = String(topic).replace(/\/compressed$/, '');
   const parts = [
-    `topic=${topic}`,
+    `topic=${base}`,
     `type=${PASSTHROUGH_TYPE}`,
     `quality=${quality}`,
   ];
