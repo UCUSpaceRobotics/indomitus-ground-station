@@ -272,7 +272,7 @@ kbd {
   overflow: hidden;
 }
 
-.screen-right .screen-body,
+.screen-left .screen-body,
 .screen-single .screen-body {
   padding: 8px;
 }
@@ -1369,9 +1369,9 @@ kbd {
   font-weight: 600;
 }
 
-/* ------------------------------------------------------------ left monitor */
+/* ----------------------------------------------------------- right monitor */
 
-.left-layout {
+.right-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 340px;
   grid-template-rows: minmax(0, 1.35fr) minmax(0, 1fr);
@@ -1380,13 +1380,13 @@ kbd {
   min-height: 0;
 }
 
-.left-cameras {
+.right-cameras {
   grid-column: 1;
   grid-row: 1;
   min-height: 0;
 }
 
-.left-rail {
+.right-rail {
   grid-column: 2;
   grid-row: 1 / span 2;
   display: flex;
@@ -1397,36 +1397,36 @@ kbd {
   padding-right: 2px;
 }
 
-.left-console {
+.right-console {
   grid-column: 1;
   grid-row: 2;
   min-height: 0;
 }
 
 /* Log folded away: the cameras take the freed row. */
-.left-layout.is-logs-collapsed {
+.right-layout.is-logs-collapsed {
   grid-template-rows: minmax(0, 1fr) auto;
 }
 
 @media (max-width: 1200px) {
-  .left-layout {
+  .right-layout {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(220px, 1fr) auto minmax(180px, 1fr);
     overflow-y: auto;
   }
-  .left-cameras,
-  .left-rail,
-  .left-console {
+  .right-cameras,
+  .right-rail,
+  .right-console {
     grid-column: 1;
   }
-  .left-rail {
+  .right-rail {
     grid-row: 2;
     overflow: visible;
   }
-  .left-console {
+  .right-console {
     grid-row: 3;
   }
-  .left-layout.is-logs-collapsed {
+  .right-layout.is-logs-collapsed {
     grid-template-rows: minmax(220px, 1fr) auto auto;
   }
 }

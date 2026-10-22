@@ -81,9 +81,9 @@ const ROUTES = [
     'Console modes', 'Steering mode']],
   // Both console boards are listed, including the stick board's own switches,
   // which arrive in Joy.buttons rather than on /switches.
-  ['#/left', ['Telemetry', 'Command path', 'Control box', 'Button board', 'Joystick board',
+  ['#/right', ['Telemetry', 'Command path', 'Control box', 'Button board', 'Joystick board',
     'drive / arm mode', 'Rover log', 'Ground speed']],
-  ['#/right', ['Camera wall', 'feeds', 'Focus', 'Grid']],
+  ['#/left', ['Camera wall', 'feeds', 'Focus', 'Grid']],
   // Every camera is a rover_cameras feed: an absolute MJPEG URL, not a ROS topic,
   // which the full-screen route prints under the "No signal" overlay when the
   // camera is not reachable from wherever this is running. The id and port come
