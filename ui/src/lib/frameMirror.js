@@ -6,7 +6,7 @@
  * entry here. A thumbnail elsewhere just displays this — it never opens its
  * own connection, so an unfocused camera costs nothing: no request, no
  * rover-side capture or encode (see the viewer-counted capture in
- * cameras/camera_mjpeg_server.py). It simply shows the last frame the camera
+ * rover_cameras/mjpeg_http.py in indomitus-rover-core). It simply shows the last frame the camera
  * happened to produce while something else was actually watching it, frozen
  * until that's true again.
  */

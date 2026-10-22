@@ -81,7 +81,7 @@ try {
   check('boost on button board', buttonBoard.includes('Boost'));
   check('mute on joy board', joyBoard.includes('No output'));
   check('mode stays on its own board', !buttonBoard.includes('Granny mode'));
-  check('cameras still labelled', buttonBoard.includes('Nano Camera 1'));
+  check('cameras still labelled', buttonBoard.includes('Mast'));
   check('free controls read unassigned', html.includes('unassigned'));
 } finally {
   await vite.close();

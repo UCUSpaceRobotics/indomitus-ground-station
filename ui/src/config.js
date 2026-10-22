@@ -27,24 +27,22 @@ export const VIDEO_MODES = {
 };
 
 /**
- * The Jetson Nano's cameras are NOT ROS topics — it runs Ubuntu 18.04, where
- * Humble has no binaries, so there is no v4l2_camera_node. cameras/start-cameras.sh
- * serves each one over plain HTTP instead, one port per camera. A camera row
- * holding an absolute URL is read straight by the browser; see isDirectUrl()
- * below and "Cameras outside ROS" in README.md.
+ * Rover cameras are NOT read through ROS: rover_cameras (indomitus-rover-core,
+ * started by rover.launch.py) serves each one as MJPEG over HTTP, one port per
+ * camera. A camera row holding an absolute URL is read straight by the browser;
+ * see isDirectUrl() below and "Rover cameras" in README.md.
  *
  * Overridable because the rover's link address is the one thing that changes
  * between the bench and a competition network.
  */
-const NANO_HOST = envOr('VITE_NANO_HOST', '10.42.0.1');
+const ROVER_HOST = envOr('VITE_ROVER_HOST', envOr('VITE_NANO_HOST', '10.42.0.1'));
 
 /**
- * The name in the path is what `start-cameras.sh` prints and what the server
- * logs; the server itself routes on `action=stream` and ignores the path
- * (see do_GET() in cameras/camera_mjpeg_server.py), so it is there to make a
- * tile's URL readable rather than to select the camera — the port does that.
+ * The name in the path is the camera's key in rover_cameras' cameras.yaml; the
+ * server routes on `action=stream` and ignores the path, so it is there to make
+ * a tile's URL readable rather than to select the camera — the port does that.
  */
-const nanoCamera = (port, name) => `http://${NANO_HOST}:${port}/${name}?action=stream`;
+const roverCamera = (port, name) => `http://${ROVER_HOST}:${port}/${name}?action=stream`;
 
 /**
  * `group` decides which monitor a camera lands on, replacing the old
@@ -52,27 +50,26 @@ const nanoCamera = (port, name) => `http://${NANO_HOST}:${port}/${name}?action=s
  * `switchIndex` is the bit in /gs/switches (from console_boards) that gates it.
  */
 export const DEFAULT_CAMERAS = [
-  // One row per camera in `cameras/cameras.yaml`, in that file's order, and
-  // these two files have to be edited together: the port here must be the
-  // `port:` pinned there, because that pin is the only thing tying a URL to a
-  // physical camera (`cameras.yaml` pins ports precisely so a tile keeps
-  // pointing at the same lens when another camera drops out of a run).
+  // One row per port slot in rover_cameras/config/cameras.yaml
+  // (indomitus-rover-core). The port here must be the `port:` pinned there:
+  // that pin is the only thing tying a URL to a physical camera. Slots with no
+  // camera there yet stay dark.
   //
   // switchIndex follows the same order, so switch bit N gates the camera on
   // port 8090+N.
   //
   // `main` is the right monitor's camera wall — the feeds driving is done on.
   // `aux` is the left monitor, alongside telemetry: the payload and inspection
-  // cameras, plus the spare Arducam, which is dark unless a mast/front/rear
+  // cameras, plus the spare Arducam, which is dark unless a mast/front
   // unit has been swapped out for it.
-  { id: 'zed2i-front', name: 'ZED2i Front (left eye)', topic: nanoCamera(8090, 'zed2i-stereo-camera-front'), switchIndex: 0, group: 'main' },
-  { id: 'arducam-mast', name: 'Mast', topic: nanoCamera(8091, 'arducam-mast'), switchIndex: 1, group: 'main' },
-  { id: 'arducam-front', name: 'Front', topic: nanoCamera(8092, 'arducam-front'), switchIndex: 2, group: 'main' },
-  { id: 'arducam-rear', name: 'Rear', topic: nanoCamera(8093, 'arducam-rear'), switchIndex: 3, group: 'main' },
-  { id: 'arducam-backup', name: 'Spare Arducam', topic: nanoCamera(8094, 'arducam-backup'), switchIndex: 4, group: 'aux' },
-  { id: 'arm-camera', name: 'Arm End Effector', topic: nanoCamera(8095, 'arm-camera'), switchIndex: 5, group: 'aux' },
-  { id: 'spectral-front', name: 'Spectral', topic: nanoCamera(8096, 'spectral-camera-front'), switchIndex: 6, group: 'aux' },
-  { id: 'thermal-front', name: 'Thermal', topic: nanoCamera(8097, 'thermal-camera-front'), switchIndex: 7, group: 'aux' },
+  { id: 'zed2i-front', name: 'ZED2i Front (left eye)', topic: roverCamera(8090, 'zed2i-stereo-camera-front'), switchIndex: 0, group: 'main' },
+  { id: 'arducam-mast', name: 'Mast', topic: roverCamera(8091, 'arducam-mast'), switchIndex: 1, group: 'main' },
+  { id: 'arducam-front', name: 'Front', topic: roverCamera(8092, 'arducam-front'), switchIndex: 2, group: 'main' },
+  { id: 'arducam-front-bottom', name: 'Front bottom', topic: roverCamera(8093, 'arducam-front-bottom'), switchIndex: 3, group: 'main' },
+  { id: 'arducam-backup', name: 'Spare Arducam', topic: roverCamera(8094, 'arducam-backup'), switchIndex: 4, group: 'aux' },
+  { id: 'arm-camera', name: 'Arm End Effector', topic: roverCamera(8095, 'arm-camera'), switchIndex: 5, group: 'aux' },
+  { id: 'spectral-front', name: 'Spectral', topic: roverCamera(8096, 'spectral-camera-front'), switchIndex: 6, group: 'aux' },
+  { id: 'thermal-front', name: 'Thermal', topic: roverCamera(8097, 'thermal-camera-front'), switchIndex: 7, group: 'aux' },
 ];
 
 /**
@@ -93,7 +90,7 @@ const PLACEHOLDER_BY_ID = {
 };
 
 const PLACEHOLDER_BY_TOPIC = {
-  // The pre-Nano ROS topics these stand-ins were written for. Kept so a console
+  // The old ROS camera topics these stand-ins were written for. Kept so a console
   // still holding the old camera table in localStorage keeps its placeholders.
   '/camera/arm/image_raw': gripperCam,
   '/camera/mast/image_raw': mastCam,
@@ -523,11 +520,11 @@ function videoQuery(topic, quality, width) {
  * topic at all: it is an MJPEG source the browser talks to directly, with no
  * rover-side ROS and no web_video_server in the path.
  *
- * This exists for cameras hanging off a machine that cannot run Humble — the
- * Jetson Nano on Ubuntu 18.04, where the whole ROS layer is unavailable but
- * `mjpg-streamer` relaying the camera's native MJPEG is not. Such a feed loses
- * what ROS transport buys (recording, per-frame timestamps, the `ros` mode's
- * frame-age readout); it keeps switch gating, which is decided in the UI.
+ * This is how every rover camera arrives (rover_cameras' MJPEG server): video
+ * over DDS on the Wi-Fi link costs far more. Such a feed loses the `ros`
+ * mode's per-frame timestamps and frame-age readout; it keeps switch gating,
+ * which is decided in the UI. Dataset capture is done on the rover, over ROS
+ * services (/rover/cameras/capture, …/record).
  */
 export function isDirectUrl(topic) {
   return /^https?:\/\//i.test(String(topic || ''));

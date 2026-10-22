@@ -258,8 +258,10 @@ yet — see below.
 
 `ui/` holds the browser console the operator drives from: camera wall, live
 telemetry, joystick command path and the rover log. It talks to ROS over
-`rosbridge_websocket` on port 9090 and takes camera video from
-`web_video_server` on port 8080.
+`rosbridge_websocket` on port 9090. Rover camera video comes straight from
+`rover_cameras` in indomitus-rover-core (MJPEG on ports 8090-8097, see
+`ui/README.md` → "Rover cameras"); `web_video_server` on port 8080 serves only
+ROS image topics.
 
 Both are started by `gs.launch.py`, together with the serial boards and the mast
 link, so on the console there is nothing to start by hand:
@@ -291,4 +293,5 @@ list.
 - `src/gs_joy`: ROS 2 package for joystick serial bridge and message conversion.
 - `src/gs_bringup`: Top-level launch configurations.
 - `docker/`: Dockerfile and entrypoint scripts.
-- `ui/`: React operator console (rosbridge + web_video_server).
+- `ui/`: React operator console (rosbridge; cameras from rover-core `rover_cameras`).
+- `mast/`: Wi-Fi link and rover bring-up scripts (`rover-up.sh`).

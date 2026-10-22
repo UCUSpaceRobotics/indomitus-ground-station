@@ -84,11 +84,11 @@ const ROUTES = [
   ['#/left', ['Telemetry', 'Command path', 'Control box', 'Button board', 'Joystick board',
     'drive / arm mode', 'Rover log', 'Ground speed']],
   ['#/right', ['Camera wall', 'feeds', 'Focus', 'Grid']],
-  // Every camera is a Nano feed: an absolute MJPEG URL rather than a ROS topic,
+  // Every camera is a rover_cameras feed: an absolute MJPEG URL, not a ROS topic,
   // which the full-screen route prints under the "No signal" overlay when the
   // camera is not reachable from wherever this is running. The id and port come
-  // from DEFAULT_CAMERAS, which mirrors cameras/cameras.yaml — so this also
-  // catches the two files drifting apart. See "Cameras outside ROS".
+  // from DEFAULT_CAMERAS, which mirrors rover_cameras/config/cameras.yaml.
+  // See "Rover cameras" in ui/README.md.
   ['#/cam/zed2i-front', ['ZED2i Front (left eye)', 'http://10.42.0.1:8090']],
   ['#/calibrate', ['Stick calibration', 'Hold X at maximum', 'Centre deadzone', 'Panel buttons']],
   ['#/arm-mapping', ['Arm mapping', 'Home pose + start servo', 'Astrobio home', 'Open gripper',

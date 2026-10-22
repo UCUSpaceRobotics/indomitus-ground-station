@@ -91,36 +91,27 @@ opened somewhere else; a hard-coded `localhost` does not.
 In focus layout the thumbnail strip opens no connection of its own: each
 thumbnail shows the last frame `ui/src/lib/frameMirror.js` captured for that
 camera while it was live elsewhere (the main pane, or a grid tile), so an
-unfocused camera costs nothing on the rover — see the viewer-counted capture
-in `cameras/camera_mjpeg_server.py`. The grid layout streams every visible
+unfocused camera costs nothing on the rover — rover_cameras encodes only while
+someone watches. The grid layout streams every visible
 tile live.
 
-### Cameras outside ROS
+### Rover cameras
 
-A camera row's "Image topic / URL" box also accepts an absolute
-`http://host:port/…` MJPEG URL. The browser then reads that source directly —
-no ROS topic, no `web_video_server` in the path.
-
-This is for a camera on a machine that cannot run Humble. The Jetson Nano at
-`10.42.0.1` is the case in hand: JetPack 4.5.1, so Ubuntu 18.04 and no
-`v4l2_camera_node` to publish with. `cameras/start-cameras.sh` serves each of its
-Arducams as MJPEG — port 8090 for the first, 8091 for the second, and so on —
-and prints the URLs, one per camera row.
-
-The shipped defaults already point `cam1`, `cam3`, `cam5` and `cam6` at ports
-8090-8093. **Those defaults only reach a browser that has no saved config**:
-camera rows live in `localStorage`, so an existing console keeps what it had.
-Either edit the rows by hand or use "Restore defaults" in the settings dialog,
-which does genuinely replace the camera table.
-
-The Nano's cameras are mounted at different angles; use the per-tile rotate
-button rather than expecting the source to be upright. Rotation is stored per
-camera id and shared across every pane showing that camera.
-
-What such a feed gives up: rosbag recording and per-frame timestamps, so the
-tile reports only whether the connection is up. It stays on HTTP even when the
-transport above is set to `ros`, because there is no topic for `ros` to read.
-Switch gating is unaffected — that is decided in the browser.
+- Served by `rover_cameras` in indomitus-rover-core (started by `rover.launch.py`), not by the GS.
+  See its [README](https://github.com/UCUSpaceRobotics/indomitus-rover-core/tree/develop/src/rover/rover_cameras).
+- A camera row's "Image topic / URL" accepts an absolute MJPEG URL:
+  `http://10.42.0.1:<port>/<name>?action=stream`. The browser reads it directly, with no ROS
+  and no `web_video_server` in between.
+- Defaults are in `DEFAULT_CAMERAS` in [src/config.js](src/config.js), one row per port slot.
+  The ports must match `rover_cameras/config/cameras.yaml`.
+- Host: `VITE_ROVER_HOST` (default `10.42.0.1`).
+- Defaults only reach a browser with no saved config. Otherwise use "Restore defaults" in settings.
+- A direct feed gets no per-frame timestamps, so it stays on HTTP even in `ros` mode. Switch
+  gating still works.
+- To fix mounting angle, use the per-tile rotate button. Rotation is stored per camera id.
+  Or set `rotate_180` in the rover's `cameras.yaml`.
+- Dataset capture happens on the rover over ROS: `/rover/cameras/{capture,record,record/toggle}`,
+  `/rover/cameras/<name>/{capture,record}`.
 
 ### Temporary placeholder stills
 
