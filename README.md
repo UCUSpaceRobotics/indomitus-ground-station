@@ -221,47 +221,14 @@ ros2 run gs_joy joy_to_servo_node
 ```
 
 ### Driving the Rover
-`joy_to_cmd_vel_node` turns `/joy` into `geometry_msgs/Twist`. It is a swerve
-rover, so `linear.y` is real — it can strafe sideways.
 
-**Publish to `/rover/cmd_vel_gs`, not `/rover/cmd_vel`.** On the rover `/rover/cmd_vel` is the
-*output* of `twist_mux`, which arbitrates three inputs (`rover_bringup/config/twist_mux.yaml`):
-
-| Input          | Priority | Source                        |
-| -------------- | -------- | ----------------------------- |
-| `cmd_vel_joy`  | 100      | onboard bluetooth gamepad     |
-| `cmd_vel_nav`  | 50       | Nav2                          |
-| `cmd_vel_gs`  | 10       | this ground station           |
-
-The launch file remaps accordingly. Lowest priority is deliberate: whoever holds
-the onboard gamepad can always override the remote console, and twist_mux drops
-any input that goes quiet for 0.5 s.
-
-Stick mapping, kept identical to `rover_teleop/config/joy.yaml` so the panel and
-the gamepad behave the same:
-
-| Twist        | Axis        | Stick             | Scale |
-| ------------ | ----------- | ----------------- | ----- |
-| `linear.x`   | 1 (`J0Y`)   | forward / back    | 0.5   |
-| `linear.y`   | 0 (`J0X`)   | strafe            | 0.5   |
-| `angular.z`  | 2 (`J1X`)   | yaw               | 1.0   |
-
-`rover_controller/RoverSwerveController` consumes the Twist as a ros2_control
-plugin and drives the wheel/steer interfaces directly — there are no
-`/steering_controller/commands` topics any more. It clamps to `max_linear_speed`
-and `max_angular_speed` (1.0 each) and stops on its own after
-`cmd_vel_timeout_s` (0.5 s).
-
-If `/joy` goes quiet for `joy_timeout` (0.2 s) the node publishes a zero Twist,
-so an unplugged board stops the rover instead of latching the last command.
-
-**Twist alone will not move the rover.** Both the hardware component and the
-controller start inactive (`hardware_components_initial_state: inactive:
-RoverHardware`, and `rover.launch.py` passes `inactive_controllers:
-swerve_controller`). The onboard gamepad enables them via its motor-toggle
-button, which calls `/controller_manager/set_hardware_component_state` and
-`/controller_manager/switch_controller`. The ground station does not do this
-yet — see below.
+- `joy_to_cmd_vel_node`: sticks (`/gs/joy`) → `geometry_msgs/Twist` on **`/rover/cmd_vel_gs`**.
+- On the rover that is one input of `twist_mux`, **priority 50**: the onboard gamepad wins over the
+  GS; the GS wins over a laptop gamepad, Nav2 and LoRa. Full table: rover-core
+  `rover_drive/config/twist_mux.yaml`.
+- `/joy` silent → the node publishes zero Twist (unplugged board stops the rover).
+- Twist alone does not move the rover: drive power must be on (`/rover/drive/power`, the
+  `drive_power` rover-function bind).
 
 ## Operator Console (Web UI)
 

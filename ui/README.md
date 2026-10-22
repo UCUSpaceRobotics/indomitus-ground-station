@@ -134,22 +134,11 @@ To remove: delete the `PLACEHOLDER_BY_ID` / `PLACEHOLDER_BY_TOPIC` block in
 
 ## Topics consumed
 
-| Topic                          | Type                          | Used for                       |
-| ------------------------------ | ----------------------------- | ------------------------------ |
-| `/switches`                    | `std_msgs/Int32MultiArray`    | Which camera tiles are enabled |
-| `/joy`                         | `sensor_msgs/Joy`             | Stick positions, publish rate  |
-| `/cmd_vel`                     | `geometry_msgs/Twist`         | Drive command                  |
-| `/servo_node/delta_twist_cmds` | `geometry_msgs/TwistStamped`  | Arm cartesian command          |
-| `/rosout`                      | `rcl_interfaces/msg/Log`      | Rover log                      |
-| `/odom`                        | `nav_msgs/Odometry`           | Speed, heading, position       |
-| `/battery_state`               | `sensor_msgs/BatteryState`    | Charge, pack voltage, current  |
-| `/imu/data`                    | `sensor_msgs/Imu`             | Roll / pitch                   |
-| `/gps/fix`                     | `sensor_msgs/NavSatFix`       | Position and fix quality       |
-| `<camera>/compressed`          | `sensor_msgs/CompressedImage` | Video in `ros` transport mode  |
-
-The first five are published by this repository. The rest are the usual rover
-topics; where one is absent the matching readout stays empty rather than
-inventing a value.
+- Names and defaults: `DEFAULT_TOPICS` in [src/config.js](src/config.js); each is editable in settings.
+- Console (`/gs/...`): switches, joy, arm joy — published by this repo.
+- Rover (`/rover/...`): drive command, odometry, IMU (ZED2i), battery (power monitor), log.
+- Arm: servo delta twist. Cameras: see "Rover cameras".
+- No publisher → the readout stays empty; nothing is invented.
 
 ## Behaviour worth knowing
 

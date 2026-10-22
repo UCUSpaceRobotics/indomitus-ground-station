@@ -71,11 +71,11 @@ class Function:
         return '', ''
 
 
-#: Everything the console can be wired to. drive_* are owned by
-#: rover_teleop/drive_power_node, lights by rover_peripherals.
+#: Everything the console can be wired to. drive_* are owned by rover_drive,
+#: lights by rover_peripherals.
 FUNCTIONS = (
     Function('drive_power', 'Drive power', '/rover/drive/power', '/rover/drive/power/toggle'),
-    # Absolute form only, though drive_power_node advertises the toggle twin
+    # Absolute form only, though the rover advertises the toggle twin
     # too. Both of this console's boards latch, so a bind here always knows its
     # own position, and inverting the rover's state on every edge instead meant
     # the switch and compact mode drifted apart the moment anything else -- the

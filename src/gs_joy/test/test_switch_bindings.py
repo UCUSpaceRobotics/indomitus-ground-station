@@ -304,8 +304,8 @@ def test_no_function_offers_a_service_the_rover_does_not():
     """Every service either side of resolve() must be one that exists.
 
     Kept as an explicit list rather than a rule, because the only way to know
-    is to go and read what the server advertises: rover_teleop/drive_power_node
-    for the drive_*, rover_peripherals/rover_lighting_node for the lights, and
+    is to go and read what the server advertises: rover_drive for the drive_*,
+    rover_peripherals for the lights, and
     gs_comms/lora_gateway_node - on this side of the radio, not the rover's -
     for the three under /gs/power.
     """

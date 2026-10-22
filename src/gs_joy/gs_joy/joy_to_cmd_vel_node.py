@@ -82,14 +82,12 @@ class JoyToCmdVelNode(Node):
 
         # Axis indices into the 6-axis Joy from console_boards:
         #   0 J0X  1 J0Y  2 J1X  3 J1Y  4 J2X  5 J2Y
-        # Mirrors rover_teleop/config/joy.yaml on the rover, so the panel and the
-        # bluetooth gamepad steer identically: J0 translates (forward/back and
-        # strafe), J1X yaws. Set an index to -1 to leave that component at zero.
+        # Same layout as the rover's gamepad teleop: J0 translates (forward/back
+        # and strafe), J1X yaws. Set an index to -1 to leave that component at zero.
         self.declare_parameter('linear_x_axis', 1)
         self.declare_parameter('linear_y_axis', 0)
         self.declare_parameter('angular_z_axis', 2)
-        # Scales match rover_teleop; the swerve controller clamps to
-        # max_linear_speed / max_angular_speed (1.0 each) anyway.
+        # The rover clamps to its own max speeds anyway.
         self.declare_parameter('linear_x_scale', 0.5)
         self.declare_parameter('linear_y_scale', 0.5)
         self.declare_parameter('angular_z_scale', 1.0)
@@ -138,8 +136,8 @@ class JoyToCmdVelNode(Node):
         #             and precise placement want.
         # 'curvature' the yaw stick sets 1/R and yaw is derived from commanded
         #             speed, so one arc holds across the speed range.
-        # Same two modes as rover_teleop/joystick_interpreter_node, so the
-        # console and the onboard gamepad steer alike.
+        # Same two modes as the rover's gamepad teleop, so the console and the
+        # onboard gamepad steer alike.
         self.declare_parameter('twist_mode', MODE_ROW)
         # Tightest turn the yaw stick can ask for at full deflection, as
         # curvature 1/R. 2.0 means R = 0.5 m, an ICR inside the wheelbase.
@@ -167,7 +165,7 @@ class JoyToCmdVelNode(Node):
         self.declare_parameter('vy_switch_value', 1)
 
         # ── granny mode ──────────────────────────────────────────────────────
-        # Everything scaled down for fine work, exactly as rover_teleop does it.
+        # Everything scaled down for fine work, as on the rover's gamepad.
         self.declare_parameter('granny_speed_scale', 0.1)
         self.declare_parameter('granny_mode', False)
         self.declare_parameter('granny_switch_source', SOURCE_SWITCHES)
@@ -175,17 +173,10 @@ class JoyToCmdVelNode(Node):
         self.declare_parameter('granny_switch_value', 1)
 
         # ── boost ────────────────────────────────────────────────────────────
-        # Granny's mirror: everything scaled up for open ground, where the
-        # normal ceiling is slower than the terrain allows. Applied after
-        # max_linear_speed, so this is a deliberate overspeed: 3.0 commands
-        # three times the clamp normal driving is held to.
-        #
-        # 3.0 rather than something larger because the rover clamps too, and a
-        # console that asks for more than the rover will give just flattens the
-        # top of the stick. Full deflection is linear_x_scale (0.5), so 3.0
-        # lands exactly on swerve_controller_test's max_linear_speed of 1.5 in
-        # rover_bringup/config/controllers.yaml. Raise the two together or the
-        # extra travel does nothing.
+        # Granny's mirror: everything scaled up for open ground. Applied after
+        # max_linear_speed, so it is a deliberate overspeed — but the rover's
+        # controller still clamps to its own max speed, so anything above that
+        # just flattens the top of the stick.
         #
         # Bound by default, unlike the other modes: switch 14 is the one free
         # latching control on the button board — cameras hold 0-7, the rover
