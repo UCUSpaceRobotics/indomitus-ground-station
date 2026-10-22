@@ -10,14 +10,14 @@
 # environment, but it leaves you a shell instead of launching anything.
 
 services:
-  indomitus_ground_station:
+  gs:
     build:
       context: .
       dockerfile: docker/Dockerfile
       args:
         ROS_DISTRO: humble
     image: indomitus-ground-station:humble
-    container_name: indomitus_ground_station
+    container_name: gs
     network_mode: host
     # Host networking gets discovery across, not data: two Fast DDS participants
     # on one host negotiate shared memory, and docker gives every container a

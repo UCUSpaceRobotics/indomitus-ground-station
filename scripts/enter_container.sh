@@ -1,6 +1,6 @@
 #!/bin/bash
 # Same commands as indomitus-rover-core's scripts/enter_container.sh, from the GS:
-#   gs    - shell in this repo's container (indomitus_ground_station)
+#   gs    - shell in this repo's container (gs)
 #   rover - rover-core's script, always with -n: the GS reaches the rover through
 #           the mast link, so it must not switch its Wi-Fi to the rover hotspot.
 
@@ -21,7 +21,7 @@ Usage: $0 {gs|rover} [OPTIONS]
 Opens a shell in the ground-station or the rover container.
 
 Commands:
-  gs      indomitus_ground_station on this machine (started if needed)
+  gs      GS container 'gs' on this machine (started if needed)
   rover   rover_prod on the Jetson, via rover-core's enter_container.sh -n
           (rover-core: \$ROVER_CORE_DIR, default ${ROVER_CORE_DIR})
 
@@ -37,7 +37,7 @@ EOF
 }
 
 run_gs() {
-  local CONTAINER_NAME="indomitus_ground_station"
+  local CONTAINER_NAME="gs"
   local COMPOSE_FILE="docker/docker-compose.gs.yaml"
 
   show_gs_help() {

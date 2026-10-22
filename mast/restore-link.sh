@@ -284,7 +284,7 @@ restore_gs() {
     # Video must not go over rosbridge — it base64s each frame into JSON and the
     # browser queue grows unbounded (measured 30-60s of lag).
     if ! ss -lnt 2>/dev/null | grep -q ':8080'; then
-        [ "$DRY" = 0 ] && docker exec -d indomitus_ground_station bash -lc \
+        [ "$DRY" = 0 ] && docker exec -d gs bash -lc \
             'source /opt/ros/humble/setup.bash; exec ros2 run web_video_server web_video_server --ros-args -p port:=8080 -p default_stream_type:=ros_compressed -p default_snapshot_type:=ros_compressed >/tmp/wvs.log 2>&1'
         did "started web_video_server (ros_compressed defaults)"
     else

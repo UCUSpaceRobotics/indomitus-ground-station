@@ -388,7 +388,7 @@ python3 mast/watch_links.py --csv run1.csv
 |---|---|
 | `ROS_DOMAIN_ID` | **90**, both ends |
 | RMW | `rmw_fastrtps_cpp` (Humble default) |
-| GS container | `indomitus_ground_station`, `network_mode: host`, `ipc: host` |
+| GS container | `gs`, `network_mode: host`, `ipc: host` |
 | Rover container | `rover_prod`, `network_mode: host` |
 
 > The rover-core README's table listing `132` for the Jetson container is **stale

@@ -280,7 +280,7 @@ off:
 
 ```bash
 docker compose up -d
-docker compose exec indomitus_ground_station bash
+docker compose exec gs bash
 ros2 launch gs_bringup gs.launch.py use_joy:=false use_comms:=false
 ```
 
