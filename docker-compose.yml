@@ -8,10 +8,11 @@ services:
     image: indomitus-ground-station:humble
     container_name: gs
     network_mode: host
-    ipc: host # must be host
-    stdin_open: true      # -i
-    tty: true             # -t
+    ipc: host
     privileged: true
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
 
     environment:
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-90}
@@ -21,16 +22,22 @@ services:
       - ROVER_LINK_PREFIX=${ROVER_LINK_PREFIX:-10.44.0.}
       - ROVER_PEER=${ROVER_PEER:-10.42.0.1}
       - ROVER_PEER_RANGE=${ROVER_PEER_RANGE:-50}
-      # Extra local addresses for the DDS interface whitelist, on top of the
-      # rover link. Empty by default; set it to also carry ROS traffic on a
-      # segment the rover path does not reach (e.g. the campus LAN address).
-      # Takes effect only on container (re)creation, not `docker compose restart`.
       - DDS_EXTRA_ADDRS=${DDS_EXTRA_ADDRS:-}
+
+      # --- console hardware --------------------------------------------------
       - JOY_BOARD_PORT=${JOY_BOARD_PORT:-/dev/ttyACM0}
       - BUTTON_BOARD_PORT=${BUTTON_BOARD_PORT:-/dev/ttyACM1}
+      # On /work, so a rebuilt container keeps the stick calibration.
       - JOY_CALIBRATION_FILE=${JOY_CALIBRATION_FILE:-/work/config/joy_calibration.yaml}
+
+      # --- mast --------------------------------------------------------------
+      # Both mast services bind this address, not 0.0.0.0: link_monitor.py on
+      # 4002, lora_bridge.py on 4001.
       - MAST_HOST=${MAST_HOST:-10.44.0.1}
 
+      # --- browser-facing servers --------------------------------------------
+      # ui/src/config.js derives ws://<host>:9090 and http://<host>:8080 from the
+      # host that served the page. Change one here and change it there too.
       - ROSBRIDGE_PORT=${ROSBRIDGE_PORT:-9090}
       - VIDEO_SERVER_PORT=${VIDEO_SERVER_PORT:-8080}
 
@@ -40,3 +47,28 @@ services:
       - /dev:/dev
     group_add:
       - dialout
+
+    # entrypoint.bash regenerates the DDS profile, builds the workspace if the
+    # sources moved, then execs this. The launch runs in tmux session `gs`, so it
+    # can be stopped/restarted without the container: scripts/enter_container.sh gs gs
+    # (Ctrl-C, Up, Enter). On `docker stop` the launch gets Ctrl-C first.
+    command: >
+      bash -c 'tmux new-session -d -s gs &&
+      tmux send-keys -t gs "ros2 launch gs_bringup gs.launch.py
+      use_joy:=${GS_USE_JOY:-true}
+      use_comms:=${GS_USE_COMMS:-true}
+      use_rosbridge:=${GS_USE_ROSBRIDGE:-true}
+      use_video:=${GS_USE_VIDEO:-true}" Enter;
+      trap "tmux send-keys -t gs C-c; sleep 5; tmux kill-server; exit 0" TERM INT;
+      sleep infinity & wait'
+
+    # Health is "the browser can reach us", not "the process is alive": a
+    # rosbridge that died leaves the container up and the UI dark, which is
+    # exactly the failure this file exists to stop.
+    healthcheck:
+      test: ["CMD-SHELL", "ss -ltn 2>/dev/null | grep -q ':${ROSBRIDGE_PORT:-9090} '"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      # First start compiles the workspace, which is minutes, not seconds.
+      start_period: 300s
