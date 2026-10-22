@@ -42,6 +42,15 @@ Variations:
 ./mast/rover-up.sh --no-ui                # everything except the UI
 ```
 
+## Enter a container
+
+```bash
+scripts/enter_container.sh gs              # GS container
+scripts/enter_container.sh rover core      # rover tmux session `core` (-r = read-only)
+```
+
+- `rover` = rover-core's `scripts/enter_container.sh rover … -n` (no Wi-Fi switching).
+
 ## Open the UI
 
 - Same laptop: <http://localhost:5173>. Another machine: `http://<gs-ip>:5173`.

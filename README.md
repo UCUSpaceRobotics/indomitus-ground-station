@@ -21,8 +21,14 @@ docker compose up -d
 
 ### 2. Enter the Container
 ```bash
-docker compose exec indomitus_ground_station bash
+scripts/enter_container.sh gs            # GS container (started if needed)
+scripts/enter_container.sh rover core    # rover container / tmux session, same as in rover-core
 ```
+
+- Same commands as rover-core's `scripts/enter_container.sh`; `rover` calls that script, so
+  rover-core must be checked out next to this repo (or set `ROVER_CORE_DIR`).
+- `rover` always adds `-n`: the GS reaches the rover over the mast link and must not switch its
+  Wi-Fi to the rover hotspot.
 
 ### 3. Launch the Joystick Bridge
 Inside the container:
