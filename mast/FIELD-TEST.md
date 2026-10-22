@@ -89,7 +89,7 @@ Four, all on the GS PC. Label them, you will be reading them at distance.
 | T1 | **Both links, one line** | `python3 mast/watch_links.py --csv run1.csv` |
 | T2 | mast Pi shell | `ssh admin@10.44.0.1` |
 | T3 | rover shell | `ssh -J admin@10.44.0.1 indomitus-rover@10.42.0.1` |
-| T4 | ROS container | `docker exec -it indomitus_ground_station bash` |
+| T4 | ROS container | `docker exec -it gs bash` |
 
 T1 is the one to photograph at each stop. It prints a line a second and the
 `--csv` file is what you plot afterwards.

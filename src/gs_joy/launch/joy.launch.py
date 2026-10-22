@@ -123,7 +123,7 @@ def generate_launch_description():
             executable='joy_to_cmd_vel_node',
             name='joy_to_cmd_vel_node',
             parameters=[{
-                # Same mapping as rover_teleop/config/joy.yaml on the rover:
+                # Same layout as the rover's gamepad teleop:
                 # J0Y forward/back, J0X strafe, J1X yaw.
                 'linear_x_axis': 1,
                 'linear_y_axis': 0,
@@ -150,14 +150,11 @@ def generate_launch_description():
                 'modes_file': LaunchConfiguration('drive_modes_file'),
             }],
             remappings=[
-                # /cmd_vel is twist_mux's OUTPUT on the rover. External sources
-                # feed an input: cmd_vel_gs (priority 10), so the onboard
-                # gamepad on cmd_vel_joy (priority 100) always wins.
+                # /cmd_vel is twist_mux's OUTPUT on the rover; the GS feeds its
+                # cmd_vel_gs input (priority: README "Driving the Rover").
                 ('cmd_vel', '/rover/cmd_vel_gs'),
-                # Read by swerve_controller_test, which is spawned into /rover
-                # and subscribes to a relative 'drive_boost'. Not a twist_mux
-                # input — it is not a command, it is the dynamics the command
-                # should be followed with.
+                # Read by the rover's swerve controller. Not a twist_mux input:
+                # it is not a command, it is the dynamics to follow it with.
                 ('drive_boost', '/rover/drive_boost'),
             ],
             output='screen'

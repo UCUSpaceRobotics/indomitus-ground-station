@@ -21,8 +21,17 @@ docker compose up -d
 
 ### 2. Enter the Container
 ```bash
-docker compose exec indomitus_ground_station bash
+scripts/enter_container.sh gs            # GS container (started if needed)
+scripts/enter_container.sh gs gs         # GS launch in tmux: Ctrl-C stops it, Up Enter restarts
+scripts/enter_container.sh rover core    # rover container / tmux session, same as in rover-core
 ```
+
+- `docker/docker-compose.gs.yaml` runs `gs.launch.py` in tmux session `gs`; the container
+  stays up when the launch is stopped. `docker stop gs` sends it Ctrl-C first.
+- Same commands as rover-core's `scripts/enter_container.sh`; `rover` calls that script, so
+  rover-core must be checked out next to this repo (or set `ROVER_CORE_DIR`).
+- `rover` always adds `-n`: the GS reaches the rover over the mast link and must not switch its
+  Wi-Fi to the rover hotspot.
 
 ### 3. Launch the Joystick Bridge
 Inside the container:
@@ -212,47 +221,14 @@ ros2 run gs_joy joy_to_servo_node
 ```
 
 ### Driving the Rover
-`joy_to_cmd_vel_node` turns `/joy` into `geometry_msgs/Twist`. It is a swerve
-rover, so `linear.y` is real — it can strafe sideways.
 
-**Publish to `/rover/cmd_vel_gs`, not `/rover/cmd_vel`.** On the rover `/rover/cmd_vel` is the
-*output* of `twist_mux`, which arbitrates three inputs (`rover_bringup/config/twist_mux.yaml`):
-
-| Input          | Priority | Source                        |
-| -------------- | -------- | ----------------------------- |
-| `cmd_vel_joy`  | 100      | onboard bluetooth gamepad     |
-| `cmd_vel_nav`  | 50       | Nav2                          |
-| `cmd_vel_gs`  | 10       | this ground station           |
-
-The launch file remaps accordingly. Lowest priority is deliberate: whoever holds
-the onboard gamepad can always override the remote console, and twist_mux drops
-any input that goes quiet for 0.5 s.
-
-Stick mapping, kept identical to `rover_teleop/config/joy.yaml` so the panel and
-the gamepad behave the same:
-
-| Twist        | Axis        | Stick             | Scale |
-| ------------ | ----------- | ----------------- | ----- |
-| `linear.x`   | 1 (`J0Y`)   | forward / back    | 0.5   |
-| `linear.y`   | 0 (`J0X`)   | strafe            | 0.5   |
-| `angular.z`  | 2 (`J1X`)   | yaw               | 1.0   |
-
-`rover_controller/RoverSwerveController` consumes the Twist as a ros2_control
-plugin and drives the wheel/steer interfaces directly — there are no
-`/steering_controller/commands` topics any more. It clamps to `max_linear_speed`
-and `max_angular_speed` (1.0 each) and stops on its own after
-`cmd_vel_timeout_s` (0.5 s).
-
-If `/joy` goes quiet for `joy_timeout` (0.2 s) the node publishes a zero Twist,
-so an unplugged board stops the rover instead of latching the last command.
-
-**Twist alone will not move the rover.** Both the hardware component and the
-controller start inactive (`hardware_components_initial_state: inactive:
-RoverHardware`, and `rover.launch.py` passes `inactive_controllers:
-swerve_controller`). The onboard gamepad enables them via its motor-toggle
-button, which calls `/controller_manager/set_hardware_component_state` and
-`/controller_manager/switch_controller`. The ground station does not do this
-yet — see below.
+- `joy_to_cmd_vel_node`: sticks (`/gs/joy`) → `geometry_msgs/Twist` on **`/rover/cmd_vel_gs`**.
+- On the rover that is one input of `twist_mux`, **priority 50**: the onboard gamepad wins over the
+  GS; the GS wins over a laptop gamepad, Nav2 and LoRa. Full table: rover-core
+  `rover_drive/config/twist_mux.yaml`.
+- `/joy` silent → the node publishes zero Twist (unplugged board stops the rover).
+- Twist alone does not move the rover: drive power must be on (`/rover/drive/power`, the
+  `drive_power` rover-function bind).
 
 ## Operator Console (Web UI)
 
@@ -264,7 +240,8 @@ telemetry, joystick command path and the rover log. It talks to ROS over
 ROS image topics.
 
 Both are started by `gs.launch.py`, together with the serial boards and the mast
-link, so on the console there is nothing to start by hand:
+link, so on the console there is nothing to start by hand. The launch runs in tmux
+session `gs` (`scripts/enter_container.sh gs gs`).
 
 
 The root `docker-compose.yml` is the development counterpart: same image and
@@ -274,7 +251,7 @@ off:
 
 ```bash
 docker compose up -d
-docker compose exec indomitus_ground_station bash
+docker compose exec gs bash
 ros2 launch gs_bringup gs.launch.py use_joy:=false use_comms:=false
 ```
 
@@ -294,4 +271,5 @@ list.
 - `src/gs_bringup`: Top-level launch configurations.
 - `docker/`: Dockerfile and entrypoint scripts.
 - `ui/`: React operator console (rosbridge; cameras from rover-core `rover_cameras`).
-- `mast/`: Wi-Fi link and rover bring-up scripts (`rover-up.sh`).
+- `mast/`: Wi-Fi link scripts (`restore-link.sh`, `rover-channel.sh`).
+- `scripts/enter_container.sh`: shell / tmux session in the GS or rover container.

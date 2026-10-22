@@ -1,12 +1,12 @@
 services:
-  indomitus_ground_station:
+  gs:
     build:
       context: .
       dockerfile: docker/Dockerfile
       args:
         ROS_DISTRO: humble
     image: indomitus-ground-station:humble
-    container_name: indomitus_ground_station
+    container_name: gs
     network_mode: host
     ipc: host # must be host
     stdin_open: true      # -i
