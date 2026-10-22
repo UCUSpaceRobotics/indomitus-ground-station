@@ -1,7 +1,7 @@
 /**
  * The console runs as several windows on several screens, each with its own
  * copy of the config module. This asserts that a settings change saved in one
- * reaches the others, which is what makes the Control box on the left monitor
+ * reaches the others, which is what makes the Control box on the right monitor
  * relabel a switch that was rebound from another window.
  */
 import { createServer } from 'vite';

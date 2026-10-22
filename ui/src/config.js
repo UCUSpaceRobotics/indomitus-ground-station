@@ -58,8 +58,8 @@ export const DEFAULT_CAMERAS = [
   // switchIndex follows the same order, so switch bit N gates the camera on
   // port 8090+N.
   //
-  // `main` is the right monitor's camera wall — the feeds driving is done on.
-  // `aux` is the left monitor, alongside telemetry: the payload and inspection
+  // `main` is the left monitor's camera wall — the feeds driving is done on.
+  // `aux` is the right monitor, alongside telemetry: the payload and inspection
   // cameras, plus the spare Arducam, which is dark unless a mast/front
   // unit has been swapped out for it.
   { id: 'zed2i-front', name: 'ZED2i Front (left eye)', topic: roverCamera(8090, 'zed2i-stereo-camera-front'), switchIndex: 0, group: 'main' },
@@ -427,7 +427,7 @@ function emit() {
  *
  * The console is not one page: `/`, `/left` and `/right` are opened as separate
  * windows on separate screens, and each runs its own copy of this module with
- * its own `current`. The Control box is only on the left monitor, while the
+ * its own `current`. The Control box is only on the right monitor, while the
  * settings dialog is usually driven from another one — so applying a bind
  * updated the window that sent it and left the panel that labels the switches
  * showing the previous wiring until someone reloaded it. From the operator's

@@ -44,8 +44,8 @@ open `http://<ground-station-ip>:5173`.
 | Route          | Purpose                                                          |
 | -------------- | ---------------------------------------------------------------- |
 | `#/`           | Monitor picker, keyboard reference, endpoint check before a run   |
-| `#/left`       | Aux cameras, telemetry, command path, control box, rover log      |
-| `#/right`      | Primary camera wall                                              |
+| `#/left`       | Primary camera wall                                              |
+| `#/right`      | Aux cameras, telemetry, command path, control box, rover log      |
 | `#/cam/<id>`   | One camera full-screen, for a third display                       |
 
 Routing is hash-based, so `dist/` works from any static host — or straight off
