@@ -13,19 +13,20 @@
 #      GS PC with ROVER_PW) if 10.42.0.1 is not reachable;
 #   2. starts the GS console stack (docker-compose.gs.yaml) pointed at the rover
 #      as its DDS peer (10.42.0.1 — the compose default);
-#   3. SSHes to the rover, generates the rover Fast DDS profile, ensures the
-#      arducams are wired, starts the ROS container and launches
-#      rover_bringup rover.launch.py with video crossing the link;
+#   3. SSHes to the rover, generates the rover Fast DDS profile, starts the ROS
+#      container and launches rover_bringup rover.launch.py in tmux session
+#      --session (default core, same as rover-launch-core.service), so it can be
+#      reached later with rover-core's scripts/enter_container.sh rover core.
+#      The launch also starts rover_cameras (MJPEG on ports 8090-8097);
 #   4. serves the UI with `npm run dev` on :5173;
-#   5. verifies the camera topics reach the GS.
+#   5. verifies the camera MJPEG servers answer from the GS.
 #
 # ASSUMPTIONS about the real rover — override with the flags/env if wrong:
-#   * ROS runs in a container named by --container (default rover_dev), from a
+#   * ROS runs in a container named by --container (default rover_prod), from a
 #     rover-core checkout at --rover-dir (default below). If the rover runs ROS
 #     bare-metal or under a different container, set --container '' and adjust.
-#   * /dev/arducam-{mast,rear,container} already exist (the rover ships udev
-#     rules — see src/rover_sensors/docs/arducam.md). rover-rover.sh only
-#     rebuilds them if missing.
+#   * camera udev symlinks come from indomitus-rover-core
+#     (system/rules.d/99-cameras.rules, scripts/setup_host.sh).
 #   * The rover sudo user is indomitus-rover with password $ROVER_PW.
 #
 # Companion to mast/restore-link.sh (the link) and mast/rover-channel.sh
@@ -38,7 +39,8 @@ set -uo pipefail
 ROVER_SSH=${ROVER_SSH:-indomitus-rover@10.42.0.1}       # over the Wi-Fi link
 ROVER_LIFELINE=${ROVER_LIFELINE:-indomitus-rover@10.45.0.51}  # wired lifeline
 ROVER_DIR=${ROVER_DIR:-/home/indomitus-rover/indomitus-rover-core}   # VERIFY on the rover
-ROVER_CONTAINER=${ROVER_CONTAINER:-rover_dev}           # '' if ROS runs bare-metal
+ROVER_CONTAINER=${ROVER_CONTAINER:-rover_prod}          # '' if ROS runs bare-metal
+ROVER_SESSION=${ROVER_SESSION:-core}                    # tmux session rover.launch.py runs in
 # Rover sudo password (indomitus-rover). Also consumed by restore-link.sh.
 ROVER_PW=${ROVER_PW:-}
 
@@ -55,7 +57,7 @@ ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-90}
 RMW=${RMW:-rmw_fastrtps_cpp}
 ROVER_PEER=${ROVER_PEER:-$ROVER_LINK_IP}                # GS discovers the rover here
 ZED_MODE=${ZED_MODE:-rgb}                               # rover HAS a ZED; 'rgb' by default
-ROVER_DDS_PROFILE=${ROVER_DDS_PROFILE:-/work/docker/fastdds_rover_link.xml}
+ROVER_DDS_PROFILE=${ROVER_DDS_PROFILE:-/tmp/fastdds_rover_link.xml}   # path inside the container
 
 # --- UI --------------------------------------------------------------------
 UI_PORT=${UI_PORT:-5173}
@@ -82,6 +84,7 @@ Options
   --lifeline U@H      rover wired lifeline     (default: $ROVER_LIFELINE)
   --rover-dir PATH    rover-core repo on rover (default: $ROVER_DIR)
   --container NAME    ROS container ('' = bare-metal) (default: $ROVER_CONTAINER)
+  --session NAME      tmux session for rover.launch.py (default: $ROVER_SESSION)
   --domain N          ROS_DOMAIN_ID            (default: $ROS_DOMAIN_ID)
   --peer IP           DDS peer (the rover)     (default: $ROVER_PEER)
   --zed-mode ''|rgb|nav  ZED2i mode            (default: $ZED_MODE)
@@ -104,6 +107,7 @@ while [ $# -gt 0 ]; do
         --lifeline)  ROVER_LIFELINE=$2; shift 2 ;;
         --rover-dir) ROVER_DIR=$2; shift 2 ;;
         --container) ROVER_CONTAINER=$2; shift 2 ;;
+        --session)   ROVER_SESSION=$2; shift 2 ;;
         --domain)    ROS_DOMAIN_ID=$2; shift 2 ;;
         --peer)      ROVER_PEER=$2; shift 2 ;;
         --zed-mode)  ZED_MODE=$2; shift 2 ;;
@@ -223,7 +227,7 @@ start_rover() {
 
     if [ "$DRY" = 1 ]; then
         say "[dry] scp mast/rover-rover.sh + docker/gen-dds-profile.sh -> rover:/tmp/"
-        say "[dry] on the rover: rover-rover.sh (DDS profile, arducam check, container, rover.launch.py)"
+        say "[dry] on the rover: rover-rover.sh (DDS profile, container, rover.launch.py in tmux '$ROVER_SESSION')"
         return 0
     fi
 
@@ -237,12 +241,12 @@ start_rover() {
         || die "scp of rover-rover.sh / gen-dds-profile.sh to the rover failed"
 
     $SSH "$ROVER" "printf '%s\n' '$ROVER_PW' | sudo -S -p '' -v && \
-        ROVER_DIR='$ROVER_DIR' CONTAINER='$ROVER_CONTAINER' DOMAIN=$ROS_DOMAIN_ID RMW=$RMW \
+        ROVER_DIR='$ROVER_DIR' CONTAINER='$ROVER_CONTAINER' SESSION='$ROVER_SESSION' DOMAIN=$ROS_DOMAIN_ID RMW=$RMW \
         PROFILE='$ROVER_DDS_PROFILE' LINK_PREFIX='$ROVER_LINK_PREFIX' GS_IP='$GS_IP' \
         ZED_MODE='$ZED_MODE' GEN_DDS=/tmp/gen-dds-profile.sh \
         bash /tmp/rover-rover.sh" \
-        || die "rover-side bring-up failed (see output above / /tmp/rover_launch.log on the rover)"
-    did "rover.launch.py started on the rover"
+        || die "rover-side bring-up failed (see output above / tmux session '$ROVER_SESSION' on the rover)"
+    did "rover.launch.py started in tmux session '$ROVER_SESSION' on the rover"
 }
 
 # ================================================================== UI ======
@@ -275,22 +279,22 @@ verify() {
     printf '  %-30s ' "ping rover $ROVER_LINK_IP"
     ping_ok "$ROVER_LINK_IP" && echo OK || echo FAIL
 
-    local topics
-    topics=$(docker exec indomitus_ground_station bash -lc \
-        'source /opt/ros/humble/setup.bash; source /opt/ws/install/setup.bash 2>/dev/null; ros2 topic list 2>/dev/null' 2>/dev/null \
-        | grep -E 'arducam|/camera/|zed' )
-    if [ -n "$topics" ]; then
-        say "camera topics visible on GS:"
-        printf '%s\n' "$topics" | sed 's/^/      /'
-    else
-        warn "no camera topics on the GS yet — give DDS a few seconds, or check /tmp/rover_launch.log on the rover"
-    fi
+    # rover_cameras: one MJPEG server per camera, /health answers one line.
+    local port health any=0
+    for port in $(seq 8090 8097); do
+        health=$(curl -s -m 2 "http://$ROVER_LINK_IP:$port/health" 2>/dev/null) || continue
+        [ -n "$health" ] || continue
+        any=1
+        say "camera :$port  $health"
+    done
+    [ "$any" = 1 ] || warn "no camera answers on $ROVER_LINK_IP:8090-8097 — check tmux session '$ROVER_SESSION' on the rover"
 
     echo
     say "UI:            http://$GS_IP:$UI_PORT   (and http://localhost:$UI_PORT)"
     say "video server:  http://$GS_IP:8080"
     say "rosbridge:     ws://$GS_IP:9090"
-    say "camera feeds are under /mast_arducam, /rear_arducam, /container_arducam (native rover names)."
+    say "rover launch:  tmux session '$ROVER_SESSION' — rover-core: scripts/enter_container.sh rover $ROVER_SESSION"
+    say "cameras:       http://$ROVER_LINK_IP:<port>/<name>?action=stream  (rover_cameras)"
 }
 
 # ============================================================================

@@ -82,8 +82,8 @@ export async function saveFrameBlob(blob, cameraName, ext, { allowDownloadFallba
  *
  * This needs the camera server's snapshot response to carry
  * `Access-Control-Allow-Origin`, since the UI reads it from a different
- * origin (its own dev/preview port). `cameras/camera_mjpeg_server.py` (the
- * Nano cameras) sends it; a stock `web_video_server` does not, and there is
+ * origin (its own dev/preview port). rover_cameras (the rover's MJPEG
+ * server) sends it; a stock `web_video_server` does not, and there is
  * no client-side way around that — every trick that avoids asking the
  * server's permission (drawing the frame through a `<canvas>`, linking
  * straight to the cross-origin URL with `download`) either throws a

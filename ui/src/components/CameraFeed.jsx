@@ -90,7 +90,7 @@ function MjpegImage({ src, alt, cameraId, onStatus }) {
  * Thumbnail strip: shows the last frame `frameMirror` has for this camera,
  * with no request of its own — a camera not currently the focused pane opens
  * no connection, so the rover neither captures nor encodes it (see
- * cameras/camera_mjpeg_server.py). Redraws only when a stream open elsewhere
+ * rover_cameras/mjpeg_http.py in indomitus-rover-core). Redraws only when a stream open elsewhere
  * (the main pane, or a grid tile) paints a new frame into the mirror.
  */
 function MirrorCanvas({ alt, cameraId, onStatus }) {
@@ -170,8 +170,8 @@ export default function CameraFeed({ camera, variant = 'main', className = '' })
 
   /**
    * Deliberately not a canvas capture. The camera servers (web_video_server,
-   * the Nano's mjpg-streamer) are cross-origin from the UI and send no CORS
-   * headers, so drawing their frames onto a `<canvas>` taints it — reading it
+   * rover_cameras) are cross-origin from the UI, and web_video_server sends no
+   * CORS headers, so drawing their frames onto a `<canvas>` taints it — reading it
    * back with `toBlob()` throws a SecurityError ("the operation is
    * insecure") in every browser, not just Firefox. The ROS transport hands
    * the frame over as base64 directly, so it is decoded straight to a Blob;
