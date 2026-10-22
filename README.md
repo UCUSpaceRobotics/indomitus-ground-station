@@ -300,4 +300,5 @@ list.
 - `src/gs_bringup`: Top-level launch configurations.
 - `docker/`: Dockerfile and entrypoint scripts.
 - `ui/`: React operator console (rosbridge; cameras from rover-core `rover_cameras`).
-- `mast/`: Wi-Fi link and rover bring-up scripts (`rover-up.sh`).
+- `mast/`: Wi-Fi link scripts (`restore-link.sh`, `rover-channel.sh`).
+- `scripts/enter_container.sh`: shell / tmux session in the GS or rover container.

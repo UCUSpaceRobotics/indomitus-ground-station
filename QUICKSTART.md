@@ -3,43 +3,24 @@
 - Run everything from the repo root on the **GS PC**.
 - Link details: [mast/README.md](mast/README.md).
 
-## Real rover
+## Bring it up
 
 ```bash
-ROVER_PW=... ./mast/rover-up.sh --dry     # review the plan first
-ROVER_PW=... ./mast/rover-up.sh           # do it
+ROVER_PW=... ./mast/restore-link.sh       # 1. Wi-Fi link, only if 10.42.0.1 does not ping (--dry first)
+docker compose -f docker/docker-compose.gs.yaml --project-directory . up -d   # 2. GS stack
+(cd ui && npm run dev)                    # 3. UI on :5173
+scripts/enter_container.sh rover core     # 4. rover: check / start the launch
 ```
 
-- Brings the Wi-Fi link up if `10.42.0.1` is down ([restore-link.sh](mast/restore-link.sh)).
-- Starts the GS stack, launches `rover_bringup rover.launch.py` on the rover (this includes
-  `rover_cameras`), and serves the UI on `:5173`.
-- The rover launch runs in tmux session `core` inside `rover_prod`, the same session as
-  rover-core's `rover-launch-core.service`. If it is already running, it gets Ctrl-C and is
-  restarted. Attach from rover-core: `scripts/enter_container.sh rover core` (`-r` = read-only).
-- Ends by querying each camera's `/health` on ports 8090-8097.
+- Rover launch = `ros2 launch rover_bringup rover.launch.py` in tmux session `core` inside
+  `rover_prod` (cameras included). It may already be running from `rover-launch-core.service`.
+- Cameras answer on `curl http://10.42.0.1:<port>/health` (ports 8090-8097).
 
-| Flag | Default | |
-|---|---|---|
-| `--rover-ssh` | `indomitus-rover@10.42.0.1` | rover over Wi-Fi |
-| `--lifeline` | `indomitus-rover@10.45.0.51` | wired fallback |
-| `--rover-dir` | `/home/indomitus-rover/indomitus-rover-core` | rover-core checkout **(verify)** |
-| `--container` | `rover_prod` | ROS container; `''` for bare-metal |
-| `--session` | `core` | tmux session for `rover.launch.py` |
-| `--zed-mode` | `rgb` | `nav`, or `''` to skip the ZED |
-
-Change the rover Wi-Fi channel and recover ROS on it:
+Change the rover Wi-Fi channel:
 
 ```bash
 ROVER_PW=... ./mast/rover-channel.sh 149        # 5 GHz ch149
 ROVER_PW=... ./mast/rover-channel.sh 11 --band bg
-```
-
-Variations:
-
-```bash
-./mast/rover-up.sh --skip-link            # link already up; just (re)start the rest
-./mast/rover-up.sh --ros-only             # only restart GS + rover ROS
-./mast/rover-up.sh --no-ui                # everything except the UI
 ```
 
 ## Enter a container
