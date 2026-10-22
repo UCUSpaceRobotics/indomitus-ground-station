@@ -1,0 +1,22 @@
+/**:
+  ros__parameters:
+    boost_mode: false
+    boost_speed_scale: 2.0
+    boost_switch_index: 5
+    boost_switch_source: joy
+    granny_mode: false
+    granny_speed_scale: 0.1
+    granny_switch_index: 6
+    granny_switch_source: joy
+    linear_x_scale: 0.5
+    linear_y_scale: 0.5
+    max_linear_speed: 0.5
+    mute: false
+    mute_switch_index: 2
+    mute_switch_source: joy
+    twist_mode: row
+    twist_mode_switch_index: 3
+    twist_mode_switch_source: joy
+    vy_enabled: false
+    vy_switch_index: 4
+    vy_switch_source: joy

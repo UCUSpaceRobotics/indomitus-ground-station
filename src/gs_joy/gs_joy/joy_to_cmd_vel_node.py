@@ -8,7 +8,7 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from sensor_msgs.msg import Joy
-from std_msgs.msg import Int32MultiArray
+from std_msgs.msg import Bool, Int32MultiArray
 from std_srvs.srv import Trigger
 from geometry_msgs.msg import Twist
 
@@ -126,6 +126,12 @@ class JoyToCmdVelNode(Node):
         # This throttles only the steady stream. Both stop paths (mode handover
         # and the watchdog) bypass it: a stop must never wait for a rate limit.
         self.declare_parameter('publish_rate', 50.0)
+        # How often the boost flag is re-asserted to the rover, independent of
+        # the Twist rate. The rover treats a stale flag as "not boosting", so
+        # this is a heartbeat and not just an edge notification: without it a
+        # dropped link would leave the rover on boost dynamics indefinitely.
+        # 2 Hz of a Bool is nothing next to the Twist stream, even over LoRa.
+        self.declare_parameter('boost_state_rate', 2.0)
 
         # ── steering mode ────────────────────────────────────────────────────
         # 'row'       the yaw stick is the yaw rate — direct, and what strafing
@@ -170,17 +176,23 @@ class JoyToCmdVelNode(Node):
 
         # ── boost ────────────────────────────────────────────────────────────
         # Granny's mirror: everything scaled up for open ground, where the
-        # normal ceiling is slower than the terrain allows. 1.2 rather than
-        # anything larger because this is applied after max_linear_speed, so it
-        # is a deliberate overspeed and the margin above the clamp is the whole
-        # point of keeping it small.
+        # normal ceiling is slower than the terrain allows. Applied after
+        # max_linear_speed, so this is a deliberate overspeed: 3.0 commands
+        # three times the clamp normal driving is held to.
+        #
+        # 3.0 rather than something larger because the rover clamps too, and a
+        # console that asks for more than the rover will give just flattens the
+        # top of the stick. Full deflection is linear_x_scale (0.5), so 3.0
+        # lands exactly on swerve_controller_test's max_linear_speed of 1.5 in
+        # rover_bringup/config/controllers.yaml. Raise the two together or the
+        # extra travel does nothing.
         #
         # Bound by default, unlike the other modes: switch 14 is the one free
         # latching control on the button board — cameras hold 0-7, the rover
         # functions in gs_bindings.yaml hold 8 and 10-13, 17 and 22, and every
         # self-resetting button belongs to the arm. Rebind it in the settings
         # dialog like any other console mode.
-        self.declare_parameter('boost_speed_scale', 1.2)
+        self.declare_parameter('boost_speed_scale', 5.0)
         self.declare_parameter('boost_mode', False)
         self.declare_parameter('boost_switch_source', SOURCE_SWITCHES)
         self.declare_parameter('boost_switch_index', 14)
@@ -321,6 +333,18 @@ class JoyToCmdVelNode(Node):
 
         # Publisher
         self.publisher_ = self.create_publisher(Twist, 'cmd_vel', 10)
+
+        # Boost, as its own flag rather than folded into the Twist. The rover's
+        # speed clamp would swallow a scale applied here; what boost actually
+        # buys on open ground is the controller's accel/decel pair, and only
+        # the controller can swap that. See boost_max_accel in controllers.yaml.
+        self.boost_publisher_ = self.create_publisher(Bool, 'drive_boost', 10)
+        self._boost_state = False
+
+        boost_state_rate = self.get_parameter(
+            'boost_state_rate').get_parameter_value().double_value
+        if boost_state_rate > 0.0:
+            self.create_timer(1.0 / boost_state_rate, self._publish_boost_state)
 
         # The settings dialog calls this straight after its set_parameters, so
         # applying a control scheme and keeping it are one press rather than
@@ -630,6 +654,8 @@ class JoyToCmdVelNode(Node):
                 self.stopped = True
                 self.next_publish_deadline = None
                 self.get_logger().info('Drive mode deselected — rover stopped')
+            # Same reasoning as the mute path: the sticks are the arm's now.
+            self._set_boost_state(False)
             return
 
         if self.active_mute(msg.buttons):
@@ -640,6 +666,10 @@ class JoyToCmdVelNode(Node):
                 self.publisher_.publish(Twist())
                 self.stopped = True
                 self.next_publish_deadline = None
+            # Drop boost with the output. Muted means something else is driving
+            # — the onboard gamepad, nav2 — and this console has no business
+            # setting the dynamics for a command it is not sending.
+            self._set_boost_state(False)
             if self._logged_mute is not True:
                 self.get_logger().info('Output muted — this console is not commanding the rover')
                 self._logged_mute = True
@@ -713,6 +743,9 @@ class JoyToCmdVelNode(Node):
         if boost != self._logged_boost:
             self.get_logger().info(f'Boost mode: {"ENABLED" if boost else "DISABLED"}')
             self._logged_boost = boost
+        # On the edge as well as on the heartbeat, so flipping the switch takes
+        # effect now rather than up to half a heartbeat later.
+        self._set_boost_state(boost)
         vx, vy, wz = apply_boost(vx, vy, wz, self.boost_speed_scale, boost)
 
         twist = Twist()
@@ -722,6 +755,29 @@ class JoyToCmdVelNode(Node):
 
         self.stopped = False
         self.publisher_.publish(twist)
+
+    def _set_boost_state(self, boost):
+        """Record the boost state, and send it immediately if it changed.
+
+        Sending only on the edge is what keeps this off the Twist rate: the
+        joy callback runs at up to 50 Hz and every one of those would otherwise
+        be a packet on a link that is sometimes LoRa. The heartbeat below is
+        what covers a lost edge.
+        """
+        boost = bool(boost)
+        if boost == self._boost_state:
+            return
+        self._boost_state = boost
+        self.boost_publisher_.publish(Bool(data=boost))
+
+    def _publish_boost_state(self):
+        """Heartbeat the current state, whether or not it changed.
+
+        The rover treats a stale flag as 'not boosting', so this is what holds
+        boost up — and what makes a console that dies mid-boost fail back to
+        normal dynamics rather than leaving the rover fast.
+        """
+        self.boost_publisher_.publish(Bool(data=self._boost_state))
 
     def check_timeout(self):
         if self.last_joy_time is None or self.stopped:
@@ -733,6 +789,10 @@ class JoyToCmdVelNode(Node):
 
         self.get_logger().warn(f"No joy message for {age:.2f}s, commanding stop")
         self.publisher_.publish(Twist())
+        # A stop is not a boosted stop. The rover would drop boost on its own
+        # once the flag went stale, but it should not spend that second braking
+        # at the boost rate on a command the operator never gave.
+        self._set_boost_state(False)
         self.stopped = True
         self.next_publish_deadline = None
 

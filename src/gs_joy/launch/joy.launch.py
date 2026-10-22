@@ -154,6 +154,11 @@ def generate_launch_description():
                 # feed an input: cmd_vel_gs (priority 10), so the onboard
                 # gamepad on cmd_vel_joy (priority 100) always wins.
                 ('cmd_vel', '/rover/cmd_vel_gs'),
+                # Read by swerve_controller_test, which is spawned into /rover
+                # and subscribes to a relative 'drive_boost'. Not a twist_mux
+                # input — it is not a command, it is the dynamics the command
+                # should be followed with.
+                ('drive_boost', '/rover/drive_boost'),
             ],
             output='screen'
         ),
