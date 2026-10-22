@@ -22,9 +22,12 @@ docker compose up -d
 ### 2. Enter the Container
 ```bash
 scripts/enter_container.sh gs            # GS container (started if needed)
+scripts/enter_container.sh gs gs         # GS launch in tmux: Ctrl-C stops it, Up Enter restarts
 scripts/enter_container.sh rover core    # rover container / tmux session, same as in rover-core
 ```
 
+- `docker/docker-compose.gs.yaml` runs `gs.launch.py` in tmux session `gs`; the container
+  stays up when the launch is stopped. `docker stop gs` sends it Ctrl-C first.
 - Same commands as rover-core's `scripts/enter_container.sh`; `rover` calls that script, so
   rover-core must be checked out next to this repo (or set `ROVER_CORE_DIR`).
 - `rover` always adds `-n`: the GS reaches the rover over the mast link and must not switch its
@@ -270,7 +273,8 @@ telemetry, joystick command path and the rover log. It talks to ROS over
 ROS image topics.
 
 Both are started by `gs.launch.py`, together with the serial boards and the mast
-link, so on the console there is nothing to start by hand:
+link, so on the console there is nothing to start by hand. The launch runs in tmux
+session `gs` (`scripts/enter_container.sh gs gs`).
 
 
 The root `docker-compose.yml` is the development counterpart: same image and

@@ -1,4 +1,5 @@
-# Operator mode: starts the whole console stack, nothing left to run by hand.
+# Operator mode: starts the whole console stack in tmux session `gs`, nothing
+# left to run by hand.
 #
 # --project-directory is not optional. Paths here are relative to the repo root,
 # and without it compose resolves them against docker/, mounting the wrong tree
@@ -78,13 +79,18 @@ services:
       - dialout
 
     # entrypoint.bash regenerates the DDS profile, builds the workspace if the
-    # sources moved, then execs this.
+    # sources moved, then execs this. The launch runs in tmux session `gs`, so it
+    # can be stopped/restarted without the container: scripts/enter_container.sh gs gs
+    # (Ctrl-C, Up, Enter). On `docker stop` the launch gets Ctrl-C first.
     command: >
-      ros2 launch gs_bringup gs.launch.py
+      bash -c 'tmux new-session -d -s gs &&
+      tmux send-keys -t gs "ros2 launch gs_bringup gs.launch.py
       use_joy:=${GS_USE_JOY:-true}
       use_comms:=${GS_USE_COMMS:-true}
       use_rosbridge:=${GS_USE_ROSBRIDGE:-true}
-      use_video:=${GS_USE_VIDEO:-true}
+      use_video:=${GS_USE_VIDEO:-true}" Enter;
+      trap "tmux send-keys -t gs C-c; sleep 5; tmux kill-server; exit 0" TERM INT;
+      sleep infinity & wait'
 
     # Health is "the browser can reach us", not "the process is alive": a
     # rosbridge that died leaves the container up and the UI dark, which is

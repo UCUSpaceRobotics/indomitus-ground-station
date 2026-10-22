@@ -27,6 +27,7 @@ ROVER_PW=... ./mast/rover-channel.sh 11 --band bg
 
 ```bash
 scripts/enter_container.sh gs              # GS container
+scripts/enter_container.sh gs gs           # GS launch (tmux `gs`): Ctrl-C / Up Enter
 scripts/enter_container.sh rover core      # rover tmux session `core` (-r = read-only)
 ```
 
