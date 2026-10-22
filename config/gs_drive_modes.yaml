@@ -8,9 +8,9 @@
     granny_speed_scale: 0.1
     granny_switch_index: 6
     granny_switch_source: joy
-    linear_x_scale: 0.5
-    linear_y_scale: 0.5
-    max_linear_speed: 0.5
+    linear_x_scale: 1.0
+    linear_y_scale: 1.0
+    max_linear_speed: 1.0
     mute: false
     mute_switch_index: 2
     mute_switch_source: joy
