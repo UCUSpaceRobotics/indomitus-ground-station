@@ -123,9 +123,10 @@ export const DEFAULT_TOPICS = {
   cmdVel: '/rover/cmd_vel',
   servoTwist: '/servo_node/delta_twist_cmds',
   odom: '/rover/odom',
-  battery: '/rover/battery_state',
-  imu: '/rover/imu/data',
-  gps: '/rover/gps/fix',
+  /** rover_power_node; sensor_arm is the other pack. */
+  battery: '/rover/power_monitor/sensor_rover',
+  /** The ZED2i's IMU. */
+  imu: '/rover/zed2i/imu/data',
   rosout: '/rosout',
 };
 
@@ -335,14 +336,23 @@ const LEGACY_TOPICS = {
   // still subscribing to names nothing publishes.
   cmdVel: { '/cmd_vel': '/rover/cmd_vel' },
   odom: { '/odom': '/rover/odom' },
-  battery: { '/battery_state': '/rover/battery_state' },
-  imu: { '/imu/data': '/rover/imu/data' },
-  gps: { '/gps/fix': '/rover/gps/fix' },
+  // Then the real publishers turned out to live elsewhere: battery on the
+  // power monitor, IMU on the ZED2i.
+  battery: {
+    '/battery_state': '/rover/power_monitor/sensor_rover',
+    '/rover/battery_state': '/rover/power_monitor/sensor_rover',
+  },
+  imu: {
+    '/imu/data': '/rover/zed2i/imu/data',
+    '/rover/imu/data': '/rover/zed2i/imu/data',
+  },
 };
 
 function migrateTopics(saved) {
   const out = { ...DEFAULT_TOPICS };
   for (const [key, value] of Object.entries(saved || {})) {
+    // Drops settings for topics the UI no longer reads (e.g. gps).
+    if (!(key in DEFAULT_TOPICS)) continue;
     if (typeof value !== 'string' || !value) continue;
     out[key] = LEGACY_TOPICS[key]?.[value] ?? value;
   }

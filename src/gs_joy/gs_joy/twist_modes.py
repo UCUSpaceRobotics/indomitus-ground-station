@@ -1,10 +1,9 @@
 """Two ways to turn three stick axes into a Twist.
 
-Mirrors the two branches of ``_publish_timer_cb`` in the rover's
-``rover_teleop/joystick_interpreter_node.py``, so the console and the onboard
-gamepad steer the rover the same way rather than two ways that merely look
-alike. The rover keeps its copy; this one exists because the console builds its
-own Twist on ``/rover/cmd_vel_gs`` instead of sending the rover a Joy.
+Same two modes as the rover's gamepad teleop (rover_teleop), so the console and
+the onboard gamepad steer the rover the same way. The rover keeps its copy; this
+one exists because the console builds its own Twist on ``/rover/cmd_vel_gs``
+instead of sending the rover a Joy.
 
 ROW (the default, and what the console did before this existed)
     The yaw stick *is* the yaw rate. Direct, predictable, and what you want

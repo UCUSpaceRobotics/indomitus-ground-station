@@ -1,141 +1,52 @@
 #!/usr/bin/env bash
 #
-# Generates the Fast DDS profile that pins DDS traffic to the rover link.
+# Generates the Fast DDS profile (docker/fastdds_rover_link.xml) that pins DDS to the rover link.
+# Run by docker/entrypoint.bash on every container start; re-run (or restart the
+# container) if the link adapter is plugged in/out — DDS reads the file once.
 #
-# Why this exists: with the rover link adapter plugged in, the ground station
-# laptop has two live interfaces — the rover link (a USB WiFi adapter on
-# 10.44.0.0/24) and whatever provides internet. Fast DDS announces unicast
-# locators for *every* interface it can see, so the rover picks one and aims
-# user data at it. When it picks the internet-side address, that address is not
-# routable from the rover and every sample is dropped, while discovery keeps
-# working perfectly over multicast.
+# Modes:
+#   linked - an address matching ROVER_LINK_PREFIX exists here: UDP whitelist
+#            + unicast discovery peers to the rover.
+#   local  - no link: plain UDP + SHM, no whitelist, no peers (a whitelist with
+#            an absent address kills all discovery).
 #
-# The result is the worst kind of failure: `ros2 node list`, `ros2 node info`
-# and `ros2 topic info -v` all look completely healthy — correct types, correct
-# QoS, correct publisher counts — and `ros2 topic hz` reports nothing on any
-# topic at all. Whitelisting the link interface is what fixes it.
-#
-# Fast DDS 2.6 (Humble) only accepts literal addresses in interfaceWhiteList —
-# no CIDR or netmask filters — so the address has to be resolved and baked in
-# here.
-#
-# TWO MODES, because a baked-in address is a liability when the link is down.
-#
-#   linked — an address in the rover link subnet exists on this machine.
-#            Emits the whitelist + static discovery peers described below.
-#
-#   local  — no rover link. Emits UDP with *no* whitelist and *no* custom peer
-#            list, so nodes on this machine (ground station container,
-#            rover_dev, Gazebo) discover each other normally.
-#
-# The mode split is the entire point of this rewrite. The previous version
-# resolved the link address with `ip route get 10.42.0.0`, which does not fail
-# when the link is down — it follows the *default route* and cheerfully returns
-# the internet-side address. So it either baked in the wrong address (exactly
-# the failure this file exists to prevent) or, once written, kept a whitelist
-# entry for an address that no longer existed. A whitelist naming an absent
-# address leaves Fast DDS with no usable interface for SPDP: `ros2 topic list`
-# comes back with nothing but /parameter_events and /rosout while every
-# container is plainly running and sharing both the host network and /dev/shm.
-# Symptom and cause look nothing alike, which is why it burned so much time.
-#
-# Notes on the 'linked' profile, all of them load-bearing:
-#
-#   127.0.0.1 is whitelisted alongside the link address so the multicast
-#   locator works locally. Without it the ground station's own nodes are
-#   invisible to each other: topic data still flows over SHM, but `ros2 node
-#   list`, `ros2 service list` and the UI's calibration service calls all come
-#   back empty.
-#
-#   initialPeersList adds a unicast peer for the rover, because the mast Pi is
-#   an L3 router between 10.44.0.0/24 and 10.42.0.0/24, and routers do not
-#   forward link-local multicast — so SPDP finds nothing at all.
-#
-#   SPDP is symmetric *per participant*, not per host. Every ROS 2 node is its
-#   own DDS participant, and a rover participant we never probe never hears
-#   from us: its own announcements go out over multicast, which the mast Pi
-#   does not forward. So one peer entry is not enough — the rover needs one per
-#   participant ID we intend to find.
-#
-#   Those entries are written with EXPLICIT PORTS, one locator per participant
-#   ID, and that detail is the whole reason this script was rewritten a second
-#   time. The obvious spelling is a single portless entry plus
-#   maxInitialPeersRange=50, letting Fast DDS fan out across IDs 0..49 — and
-#   that spelling quietly destroys discovery on the local machine. Measured on
-#   this setup, holding everything else constant:
-#
-#     portless peer, maxInitialPeersRange=50   -> local discovery DEAD
-#     portless peer, maxInitialPeersRange=4    -> local discovery OK
-#     peer with an explicit port, range=50     -> local discovery OK
-#     multicast peer alone, no unicast peer    -> local discovery OK
-#
-#   A participant could not see a publisher in its *own container* under the
-#   first one. Reachability of the peer was not the variable — substituting
-#   127.0.0.1 for the rover address failed exactly the same way. It is the
-#   portless fan-out itself, so the fan-out is done here instead, where it is
-#   explicit and bounded, and maxInitialPeersRange is left at its default.
-#
-#   Unicast metatraffic port for participant N in domain D is
-#   PB + DG*D + d1 + PG*N = 7400 + 250*D + 10 + 2*N.
-#
-#   The SPDP multicast locator is repeated explicitly, and that is not
-#   redundant: Fast DDS puts it in initialPeersList by default, but defining
-#   the element *replaces* that default rather than adding to it. Listing only
-#   the rover silently breaks discovery between nodes on this machine.
-#
-#   Shared memory is kept as a user transport so the ground station container
-#   talks to a same-host rover_dev/Gazebo container over SHM.
+# Why each part of 'linked' exists (all were real bugs):
+#   - Whitelist: Fast DDS announces every interface; the rover then sends data
+#     to the internet-side address and drops it. Discovery still looks fine,
+#     `ros2 topic hz` is silent.
+#   - 127.0.0.1 in the whitelist: otherwise local nodes don't see each other.
+#   - Unicast peers: the mast Pi routes, so multicast SPDP never reaches the rover.
+#     One locator per rover participant ID with an explicit port
+#     (7400 + 250*D + 10 + 2*N); a portless peer with maxInitialPeersRange=50
+#     breaks local discovery.
+#   - Multicast locator listed explicitly: defining initialPeersList replaces
+#     the default one.
+#   - Fast DDS 2.6 accepts only literal addresses (no CIDR), hence this script.
 #
 # Usage:
-#   ./docker/gen-dds-profile.sh                    # autodetect
-#   ROVER_LINK_IP=10.44.0.10 ./docker/gen-dds-profile.sh   # force linked mode
-#   ROVER_LINK_PREFIX=10.44.0. ./docker/gen-dds-profile.sh
-#   ROVER_PEER=10.42.0.1 ./docker/gen-dds-profile.sh
-#
-# Run automatically by docker/entrypoint.bash on every container start, so the
-# profile cannot outlive the topology it describes. Re-run it by hand (or just
-# `docker compose restart indomitus_ground_station`) if the link adapter is
-# plugged in or unplugged while the container is up — a DDS participant reads
-# this file once, when it is created.
+#   ./docker/gen-dds-profile.sh                              # autodetect
+#   ROVER_LINK_IP=10.44.0.10 ./docker/gen-dds-profile.sh     # force linked mode
+#   ROVER_LINK_PREFIX=10.44.0. ROVER_PEER=10.42.0.1 ./docker/gen-dds-profile.sh
 set -euo pipefail
 
-# Address prefix that identifies the rover link. Matched literally against the
-# machine's own addresses; nothing is inferred from routes.
+# Our address on the rover link is the one starting with this prefix.
 LINK_PREFIX="${ROVER_LINK_PREFIX:-10.44.0.}"
-# The rover's address on the wireless segment — where SPDP announcements are
-# sent now that multicast cannot reach it.
+# Rover address for unicast discovery.
 PEER="${ROVER_PEER:-10.42.0.1}"
-# How many participant IDs to probe on the rover. Must exceed the number of
-# ROS 2 nodes running there (one participant each), with headroom for the ros2
-# CLI and daemon, which take IDs of their own. Each one becomes its own
-# explicitly-ported locator below.
+# Rover participant IDs to probe: more than its ROS nodes + CLI/daemon.
 PEER_RANGE="${ROVER_PEER_RANGE:-50}"
 DOMAIN="${ROS_DOMAIN_ID:-90}"
-# Extra local addresses to whitelist alongside the rover link, space or comma
-# separated. Empty by default: the whitelist exists to stop Fast DDS announcing
-# locators the rover cannot route to, so widening it is always a deliberate act.
-#
-# Use it when a second segment must also carry ROS traffic — e.g. a Jetson on
-# the campus LAN that the rover path does not reach:
-#
+# Extra local addresses to whitelist (space/comma separated), e.g. a second
+# segment that must carry ROS. Each one slows discovery; add only what's needed.
 #   DDS_EXTRA_ADDRS=10.20.18.46 ./docker/gen-dds-profile.sh
-#
-# Cost of adding one: the GS then announces locators on that interface too, and
-# the rover will try and fail them before falling back to the link address.
-# Discovery still completes, but it is slower and noisier — so list only
-# addresses that a peer you actually care about can reach.
 EXTRA_ADDRS="${DDS_EXTRA_ADDRS:-}"
 OUT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fastdds_rover_link.xml"
 
-# RTPS well-known port for SPDP multicast: PB + DG*domainId + d0,
-# with PB=7400, DG=250, d0=0. The port must be spelled out because an initial
-# peer with no port makes Fast DDS fan out across participant IDs 0..4, which
-# is meaningless for a multicast discovery address.
+# SPDP multicast port: 7400 + 250*domain. Explicit, or Fast DDS fans out over IDs.
 MCAST_ADDR=239.255.0.1
 MCAST_PORT=$((7400 + 250 * DOMAIN))
 
-# One explicit locator per rover participant ID. See the header for why these
-# are not left to maxInitialPeersRange.
+# One explicit locator per rover participant ID (see header).
 rover_peer_locators() {
     local id port
     for (( id = 0; id < PEER_RANGE; id++ )); do
@@ -151,10 +62,8 @@ LOC
     done
 }
 
-# Renders DDS_EXTRA_ADDRS as whitelist entries. Accepts commas or spaces, drops
-# blanks, and emits nothing at all when the variable is empty — an empty
-# <address></address> element is not ignored by Fast DDS, it matches no
-# interface and takes the whole transport down with it.
+# Whitelist entries from DDS_EXTRA_ADDRS; nothing when empty (an empty
+# <address/> matches no interface and kills the transport).
 extra_addr_elements() {
     local a
     for a in ${EXTRA_ADDRS//,/ }; do
@@ -163,14 +72,8 @@ extra_addr_elements() {
     done
 }
 
-# Enumerating the machine's own IPv4 addresses is the one thing this script
-# cannot get wrong. `ip` is the good tool, but it lives in iproute2, which the
-# ROS base image does not carry — and inside the container an unguarded `ip`
-# call would fail, yield no addresses, and silently select 'local' mode *while
-# the rover link was up*. That is the original bug wearing a different hat, so
-# the tool is chosen explicitly and its absence is a hard error, never an empty
-# result. `hostname -I` is the fallback: it prints exactly the global IPv4
-# addresses, space separated, and it is present in the image today.
+# Own IPv4 addresses via `ip`, else `hostname -I` (the ROS image has no iproute2).
+# No tool = hard error: an empty result would silently pick 'local' mode.
 ADDR_TOOL=""
 if command -v ip >/dev/null 2>&1; then
     ADDR_TOOL=ip
@@ -186,11 +89,8 @@ live_addrs() {
 }
 
 if [ -z "$ADDR_TOOL" ]; then
-    echo "error: cannot enumerate this machine's IPv4 addresses — neither 'ip'" >&2
-    echo "       (iproute2) nor a working 'hostname -I' is available." >&2
-    echo "       Refusing to guess: picking a mode blind would either whitelist" >&2
-    echo "       nothing while the rover link is up, or whitelist an address" >&2
-    echo "       that is gone. Install iproute2, or pass ROVER_LINK_IP=..." >&2
+    echo "error: cannot list this machine's IPv4 addresses (no 'ip', no 'hostname -I')." >&2
+    echo "       Install iproute2 or pass ROVER_LINK_IP=..." >&2
     exit 1
 fi
 
@@ -198,9 +98,7 @@ LINK_IP=""
 if [ -n "${ROVER_LINK_IP:-}" ]; then
     LINK_IP="$ROVER_LINK_IP"
     if ! live_addrs | grep -qx "$LINK_IP"; then
-        echo "warning: ROVER_LINK_IP=$LINK_IP is not an address on this machine." >&2
-        echo "         Writing it anyway, as asked — but if it stays absent, DDS" >&2
-        echo "         discovery will come back empty." >&2
+        echo "warning: ROVER_LINK_IP=$LINK_IP is not on this machine; discovery may be empty." >&2
     fi
 else
     LINK_IP="$(live_addrs | grep -m1 -- "^${LINK_PREFIX}" || true)"
@@ -222,11 +120,7 @@ cat > "$OUT" <<EOF
   Discovery peers:    $MCAST_ADDR:$MCAST_PORT (local, domain $DOMAIN), $PEER (rover)
   Extra whitelisted:  ${EXTRA_ADDRS:-none (set DDS_EXTRA_ADDRS to widen)}
   Rover peer locators: participant IDs 0..$((PEER_RANGE - 1)), explicit ports
-
-  Restricts UDP to the rover link so Fast DDS stops announcing locators the
-  rover cannot route to, and adds a unicast discovery peer for the rover
-  because the mast Pi routes and multicast SPDP does not cross a router.
-  See the header of gen-dds-profile.sh for why each element is load-bearing.
+  Why each element exists: header of gen-dds-profile.sh.
 -->
 <dds xmlns="http://www.eprosima.com">
   <profiles>
@@ -258,8 +152,7 @@ $(extra_addr_elements)
                 <port>$MCAST_PORT</port>
               </udpv4>
             </locator>
-            <!-- Reaches the rover, which multicast cannot: the mast Pi routes.
-                 One locator per participant ID, ports spelled out. -->
+            <!-- Rover: multicast does not cross the mast Pi. -->
 $(rover_peer_locators)
           </initialPeersList>
         </builtin>
@@ -281,19 +174,8 @@ cat > "$OUT" <<EOF
   GENERATED by docker/gen-dds-profile.sh — do not edit by hand.
   Mode: local (no address matching $LINK_PREFIX* on this machine)
 
-  No rover link is up, so there is no second interface to steer away from and
-  nothing to whitelist. Deliberately omits both interfaceWhiteList and
-  initialPeersList: a whitelist naming an absent address, or a peer list aimed
-  at an unreachable rover, leaves Fast DDS with no working SPDP path and makes
-  same-host containers invisible to each other.
-
-  UDP and SHM are still declared explicitly rather than falling back to the
-  builtin transports, so that this file stays a valid profile target for
-  FASTRTPS_DEFAULT_PROFILES_FILE and the two modes differ only in the parts
-  that describe the link.
-
-  Re-run gen-dds-profile.sh once the rover link adapter is up to switch back to
-  linked mode.
+  No whitelist and no peers on purpose (an absent address or unreachable peer
+  breaks local discovery). Re-run once the rover link is up.
 -->
 <dds xmlns="http://www.eprosima.com">
   <profiles>
@@ -320,7 +202,5 @@ cat > "$OUT" <<EOF
   </profiles>
 </dds>
 EOF
-    echo "wrote $OUT (mode: local — no rover link found matching ${LINK_PREFIX}*)"
-    echo "  local nodes and same-host containers will discover each other;"
-    echo "  re-run this once the rover link adapter is up."
+    echo "wrote $OUT (mode: local — no address matching ${LINK_PREFIX}*; re-run once the link is up)"
 fi

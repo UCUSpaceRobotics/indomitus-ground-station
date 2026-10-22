@@ -65,7 +65,6 @@ const TOPIC_LABELS = {
   odom: 'Odometry',
   battery: 'Battery state',
   imu: 'IMU',
-  gps: 'GNSS fix',
   rosout: 'Log',
 };
 
