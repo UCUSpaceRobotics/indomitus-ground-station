@@ -58,6 +58,7 @@ try {
     driveModeBind: { source: 'switches', index: 15 },
     vyBind: { source: 'switches', index: 16 },
     grannyBind: { source: 'joy', index: 6 },
+    boostBind: { source: 'switches', index: 14 },
     muteBind: { source: 'joy', index: 7 },
   });
 
@@ -77,9 +78,10 @@ try {
   check('steering mode labelled', buttonBoard.includes('Steering mode'));
   check('strafe labelled', buttonBoard.includes('Strafe'));
   check('granny on joy board', joyBoard.includes('Granny mode'));
+  check('boost on button board', buttonBoard.includes('Boost'));
   check('mute on joy board', joyBoard.includes('No output'));
   check('mode stays on its own board', !buttonBoard.includes('Granny mode'));
-  check('cameras still labelled', buttonBoard.includes('Nano Camera 1'));
+  check('cameras still labelled', buttonBoard.includes('Mast'));
   check('free controls read unassigned', html.includes('unassigned'));
 } finally {
   await vite.close();

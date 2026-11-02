@@ -1,5 +1,11 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
-import { Plus, RotateCcw, Trash2, Search } from 'lucide-react';
+import { FolderOpen, Plus, RotateCcw, Trash2, Search, X } from 'lucide-react';
+import {
+  chooseScreenshotDir,
+  forgetScreenshotDir,
+  getScreenshotDirHandle,
+  screenshotsSupported,
+} from '../lib/screenshotDir';
 import {
   DEFAULT_CAMERAS,
   DEFAULT_TOPICS,
@@ -8,6 +14,7 @@ import {
   updateConfig,
   useConfig,
 } from '../config';
+import * as ROSLIB from 'roslib';
 import { useRos } from '../ros/context';
 import { parameterRequest, useServiceCaller } from '../ros/useService';
 import {
@@ -29,6 +36,7 @@ const UNBOUND = -1;
 const MODE_FLAGS = {
   vyBind: 'vyEnabled',
   grannyBind: 'grannyMode',
+  boostBind: 'boostMode',
   muteBind: 'mute',
 };
 
@@ -38,6 +46,14 @@ const MODE_FLAGS = {
  * keystroke, short enough that a click-and-close still lands.
  */
 const CAMERA_SAVE_DELAY = 600;
+
+/** The "Calls" cell for a console mode, with the live multiplier for the speed modes. */
+const modeCalls = (mode, draft) =>
+  mode.key === 'grannyBind'
+    ? `speed \u00d7${draft.grannySpeedScale}`
+    : mode.key === 'boostBind'
+      ? `speed \u00d7${draft.boostSpeedScale}`
+      : mode.calls;
 
 const sameCameras = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -49,7 +65,6 @@ const TOPIC_LABELS = {
   odom: 'Odometry',
   battery: 'Battery state',
   imu: 'IMU',
-  gps: 'GNSS fix',
   rosout: 'Log',
 };
 
@@ -68,7 +83,10 @@ export default function SettingsDialog({ open, onClose }) {
   const [topicNames, setTopicNames] = useState([]);
   const [scanState, setScanState] = useState('idle');
   const [bindStatus, setBindStatus] = useState(null);
+  const [speedStatus, setSpeedStatus] = useState(null);
   const [cameraSave, setCameraSave] = useState('idle');
+  const [screenshotDirName, setScreenshotDirName] = useState(null);
+  const [screenshotError, setScreenshotError] = useState(null);
   const callService = useServiceCaller();
 
   /** Last camera list handed to the config, so a no-op edit is not re-saved. */
@@ -155,10 +173,44 @@ export default function SettingsDialog({ open, onClose }) {
     return () => clearTimeout(timer);
   }, [draft.cameras]);
 
+  // The picked directory lives in IndexedDB (see lib/screenshotDir.js), not the
+  // config blob — a FileSystemDirectoryHandle cannot be JSON-serialized. Read
+  // it back whenever the dialog opens, same as everything else here.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    getScreenshotDirHandle().then((handle) => {
+      if (!cancelled) setScreenshotDirName(handle?.name ?? null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  const pickScreenshotDir = useCallback(async () => {
+    setScreenshotError(null);
+    try {
+      const handle = await chooseScreenshotDir();
+      setScreenshotDirName(handle.name);
+    } catch (err) {
+      // The user closing the picker throws AbortError — not a real failure.
+      if (err?.name !== 'AbortError') setScreenshotError(String(err.message || err));
+    }
+  }, []);
+
+  const clearScreenshotDir = useCallback(async () => {
+    await forgetScreenshotDir();
+    setScreenshotDirName(null);
+  }, []);
+
   const scanTopics = useCallback(() => {
     if (!ros) return;
     setScanState('scanning');
-    ros.getTopics(
+    // Absolute name on purpose: roslib's getTopics sends a relative
+    // 'rosapi/topics', which rosbridge resolves under its own /gs namespace
+    // to /gs/rosapi/topics. rosapi serves /rosapi/* whatever namespace it runs in.
+    new ROSLIB.Service({ ros, name: '/rosapi/topics', serviceType: 'rosapi/Topics' }).callService(
+      {},
       (result) => {
         const names = Array.isArray(result?.topics) ? [...result.topics].sort() : [];
         setTopicNames(names);
@@ -384,9 +436,19 @@ export default function SettingsDialog({ open, onClose }) {
           ['granny_mode', draft.grannyMode, 'bool'],
           ['granny_switch_source', draft.grannyBind.source, 'string'],
           ['granny_switch_index', draft.grannyBind.index, 'int'],
+          ['boost_mode', draft.boostMode, 'bool'],
+          ['boost_switch_source', draft.boostBind.source, 'string'],
+          ['boost_switch_index', draft.boostBind.index, 'int'],
           ['mute', draft.mute, 'bool'],
           ['mute_switch_source', draft.muteBind.source, 'string'],
           ['mute_switch_index', draft.muteBind.index, 'int'],
+          // Full stick is linear_*_scale, and max_linear_speed only clamps it,
+          // so all three move together or the setting changes nothing.
+          ['max_linear_speed', draft.maxLinearSpeed],
+          ['linear_x_scale', draft.maxLinearSpeed],
+          ['linear_y_scale', draft.maxLinearSpeed],
+          ['granny_speed_scale', draft.grannySpeedScale],
+          ['boost_speed_scale', draft.boostSpeedScale],
         ]),
       );
       const modeRejected = (modeResponse?.results || []).filter((r) => !r.successful);
@@ -414,18 +476,32 @@ export default function SettingsDialog({ open, onClose }) {
         vyEnabled: draft.vyEnabled,
         grannyBind: draft.grannyBind,
         grannyMode: draft.grannyMode,
+        boostBind: draft.boostBind,
+        boostMode: draft.boostMode,
         muteBind: draft.muteBind,
         mute: draft.mute,
+        maxLinearSpeed: draft.maxLinearSpeed,
+        grannySpeedScale: draft.grannySpeedScale,
+        boostSpeedScale: draft.boostSpeedScale,
       });
 
-      const saved = await callService(
-        `${draft.interpreterNode}/save_bindings`,
-        'std_srvs/srv/Trigger',
-      );
+      // Two files, because the two halves of a control scheme live on two
+      // nodes: the binds on the interpreter, the console modes on the drive
+      // node. Both are saved, or the half that was not comes back on the next
+      // restart while this dialog goes on showing what was applied — which is
+      // exactly how the modes used to be lost.
+      const [savedBinds, savedModes] = await Promise.all([
+        callService(`${draft.interpreterNode}/save_bindings`, 'std_srvs/srv/Trigger'),
+        callService(`${draft.driveNode}/save_modes`, 'std_srvs/srv/Trigger'),
+      ]);
+      const unsaved = [
+        savedBinds?.success ? '' : `binds (${savedBinds?.message || 'unknown error'})`,
+        savedModes?.success ? '' : `modes (${savedModes?.message || 'unknown error'})`,
+      ].filter(Boolean);
       setBindStatus(
-        saved?.success
-          ? { tone: 'ok', text: `${binds.length} binds applied and saved.` }
-          : { tone: 'warn', text: `Applied, but not saved: ${saved?.message || 'unknown error'}` },
+        unsaved.length
+          ? { tone: 'warn', text: `Applied, but not saved: ${unsaved.join('; ')}` }
+          : { tone: 'ok', text: `${binds.length} binds and console modes applied and saved.` },
       );
     } catch (err) {
       setBindStatus({ tone: 'crit', text: String(err.message || err) });
@@ -442,8 +518,59 @@ export default function SettingsDialog({ open, onClose }) {
     draft.vyEnabled,
     draft.grannyBind,
     draft.grannyMode,
+    draft.boostBind,
+    draft.boostMode,
     draft.muteBind,
     draft.mute,
+    draft.maxLinearSpeed,
+    draft.grannySpeedScale,
+    draft.boostSpeedScale,
+  ]);
+
+  const applySpeeds = useCallback(async () => {
+    setSpeedStatus({ tone: 'muted', text: 'Applying…' });
+    try {
+      const response = await callService(
+        `${draft.driveNode}/set_parameters`,
+        'rcl_interfaces/srv/SetParameters',
+        parameterRequest([
+          // Full stick is linear_*_scale, and max_linear_speed only clamps it,
+          // so all three move together or the setting changes nothing.
+          ['max_linear_speed', draft.maxLinearSpeed],
+          ['linear_x_scale', draft.maxLinearSpeed],
+          ['linear_y_scale', draft.maxLinearSpeed],
+          ['granny_speed_scale', draft.grannySpeedScale],
+          ['boost_speed_scale', draft.boostSpeedScale],
+        ]),
+      );
+      const rejected = (response?.results || []).filter((r) => !r.successful);
+      if (rejected.length) {
+        setSpeedStatus({
+          tone: 'crit',
+          text: rejected.map((r) => r.reason).join('; ') || 'Rejected by the node',
+        });
+        return;
+      }
+      updateConfig({
+        maxLinearSpeed: draft.maxLinearSpeed,
+        grannySpeedScale: draft.grannySpeedScale,
+        boostSpeedScale: draft.boostSpeedScale,
+      });
+      const saved = await callService(`${draft.driveNode}/save_modes`, 'std_srvs/srv/Trigger');
+      setSpeedStatus(
+        saved?.success
+          ? { tone: 'ok', text: 'Speed limits applied and saved.' }
+          : { tone: 'warn', text: `Applied, but not saved: ${saved?.message || 'unknown error'}` },
+      );
+    } catch (err) {
+      setSpeedStatus({ tone: 'crit', text: String(err.message || err) });
+    }
+  }, [
+    callService,
+    draft.driveNode,
+    draft.maxLinearSpeed,
+    draft.grannySpeedScale,
+    draft.boostSpeedScale,
   ]);
 
   const save = () => {
@@ -535,6 +662,62 @@ export default function SettingsDialog({ open, onClose }) {
               MJPEG is lighter on the link. The rosbridge transport needs no extra rover-side node
               and reports true frame rate and frame age, which is what lets a frozen feed be
               distinguished from a live one.
+            </p>
+          </section>
+
+          <section>
+            <h3>Screenshots</h3>
+            {screenshotsSupported() ? (
+              <>
+                <div className="settings-row">
+                  <button type="button" className="btn btn-sm" onClick={pickScreenshotDir}>
+                    <FolderOpen size={13} /> {screenshotDirName ? 'Change folder' : 'Choose folder'}
+                  </button>
+                  {screenshotDirName && (
+                    <>
+                      <span className="mono">{screenshotDirName}</span>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={clearScreenshotDir}
+                        title="Forget this folder"
+                      >
+                        <X size={13} />
+                      </button>
+                    </>
+                  )}
+                </div>
+                {screenshotError && <p className="field-hint is-crit">{screenshotError}</p>}
+                <p className="field-hint">
+                  Where the save button on a camera feed writes frames. Each is named with the
+                  camera, date and time, down to the second. Shared by every window on this
+                  browser.
+                </p>
+              </>
+            ) : (
+              <p className="field-hint is-warn">
+                This browser cannot save straight to a folder — that needs a Chromium-based
+                browser. The option below saves frames as a regular download instead.
+              </p>
+            )}
+
+            <label className="field-check">
+              <input
+                type="checkbox"
+                checked={Boolean(draft.screenshotDownloadFallback)}
+                onChange={(event) =>
+                  setDraft({ ...draft, screenshotDownloadFallback: event.target.checked })
+                }
+              />
+              <span>
+                Fall back to a browser download when folder saving isn't available (no folder
+                chosen above, or an unsupported browser)
+              </span>
+            </label>
+            <p className="field-hint">
+              A fallback save lands in this browser's own downloads location, not the folder
+              above — the save pop-up says so whenever it happens, so it's never a silent
+              surprise.
             </p>
           </section>
 
@@ -769,7 +952,7 @@ export default function SettingsDialog({ open, onClose }) {
                   >
                     <span className="fn-name">{mode.name}</span>
                     <span className="mono muted bind-call">
-                      {mode.calls}
+                      {modeCalls(mode, draft)}
                       <em className="bind-kind">local</em>
                     </span>
                     <span className="fn-bound">
@@ -855,6 +1038,50 @@ export default function SettingsDialog({ open, onClose }) {
               These are console-side settings on <span className="mono">joy_to_cmd_vel_node</span>,
               not rover services. The last column is what applies when no switch is bound — and
               what the node falls back to if a bound board stops reporting.
+            </p>
+
+            <div className="settings-subhead">
+              <h4>Speed limits</h4>
+              <div className="settings-subhead-actions">
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={applySpeeds}
+                  disabled={!connected}
+                  title={connected ? '' : 'rosbridge is not connected'}
+                >
+                  Apply speeds
+                </button>
+              </div>
+            </div>
+            {speedStatus && (
+              <p className={`field-hint is-${speedStatus.tone}`}>{speedStatus.text}</p>
+            )}
+            <div className="bind-table">
+              {[
+                ['maxLinearSpeed', 'Max speed (m/s)', 3, 0.1],
+                ['grannySpeedScale', 'Granny multiplier', 1, 0.05],
+                ['boostSpeedScale', 'Boost multiplier', 10, 0.5],
+              ].map(([key, label, max, step]) => (
+                <label key={key} className="field">
+                  <span>{label}</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={max}
+                    step={step}
+                    value={draft[key]}
+                    onChange={(event) =>
+                      setDraft((prev) => ({ ...prev, [key]: Number(event.target.value) }))
+                    }
+                  />
+                </label>
+              ))}
+            </div>
+            <p className="field-hint">
+              Boost multiplies after the max-speed clamp, so
+              max speed &times; boost is what the console asks the rover for; the rover&apos;s own
+              controller limit still caps it.
             </p>
 
             <div className="settings-subhead">

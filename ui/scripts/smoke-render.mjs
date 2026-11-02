@@ -81,13 +81,15 @@ const ROUTES = [
     'Console modes', 'Steering mode']],
   // Both console boards are listed, including the stick board's own switches,
   // which arrive in Joy.buttons rather than on /switches.
-  ['#/left', ['Telemetry', 'Command path', 'Control box', 'Button board', 'Joystick board',
+  ['#/right', ['Telemetry', 'Command path', 'Control box', 'Button board', 'Joystick board',
     'drive / arm mode', 'Rover log', 'Ground speed']],
-  ['#/right', ['Camera wall', 'feeds', 'Focus', 'Grid']],
-  // cam1 is a Nano feed: an absolute MJPEG URL rather than a ROS topic, which
-  // the full-screen route prints under the "No signal" overlay when the camera
-  // is not reachable from wherever this is running. See "Cameras outside ROS".
-  ['#/cam/cam1', ['Nano Camera 1', 'http://10.42.0.1:8090']],
+  ['#/left', ['Camera wall', 'feeds', 'Focus', 'Grid']],
+  // Every camera is a rover_cameras feed: an absolute MJPEG URL, not a ROS topic,
+  // which the full-screen route prints under the "No signal" overlay when the
+  // camera is not reachable from wherever this is running. The id and port come
+  // from DEFAULT_CAMERAS, which mirrors rover_cameras/config/cameras.yaml.
+  // See "Rover cameras" in ui/README.md.
+  ['#/cam/zed2i-front', ['ZED2i Front (left eye)', 'http://10.42.0.1:8090']],
   ['#/calibrate', ['Stick calibration', 'Hold X at maximum', 'Centre deadzone', 'Panel buttons']],
   ['#/arm-mapping', ['Arm mapping', 'Home pose + start servo', 'Astrobio home', 'Open gripper',
     'Sticks']],

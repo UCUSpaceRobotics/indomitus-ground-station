@@ -272,7 +272,7 @@ kbd {
   overflow: hidden;
 }
 
-.screen-right .screen-body,
+.screen-left .screen-body,
 .screen-single .screen-body {
   padding: 8px;
 }
@@ -390,6 +390,38 @@ kbd {
 
 .panel-fill {
   height: 100%;
+}
+
+.panel.is-collapsed {
+  height: auto;
+  flex: none;
+}
+
+/* Folding trigger: the whole title becomes a button so it is easy to hit. */
+.panel-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.panel-toggle:hover h2 {
+  color: var(--text);
+}
+
+.panel-caret {
+  flex: none;
+  color: var(--text-dim);
+  transition: transform 120ms ease;
+}
+
+.panel-toggle[aria-expanded='false'] .panel-caret {
+  transform: rotate(-90deg);
 }
 
 .panel-head {
@@ -836,8 +868,53 @@ kbd {
 .feed-retry {
   position: absolute;
   top: 8px;
-  left: 8px;
+  /* Clear of the stream switch, which owns the top-left corner. */
+  left: 44px;
   z-index: 1;
+}
+
+/* The per-camera stream switch. Overlaid like the rotate button, so switching a
+   feed off costs the pane no space and moves nothing. Held back until hover for
+   the same reason rotate is — except when the feed is off, where it is the only
+   way back and has to be visible. */
+.feed-power {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.feed:hover .feed-power,
+.feed-power:focus-visible,
+.feed-power.is-off {
+  opacity: 1;
+}
+
+.feed-power.is-off {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+/* Thumbnails have no room for a full control; the switch shrinks rather than
+   disappearing, so every camera in the strip can still be silenced. */
+.feed-thumb .feed-power {
+  top: 4px;
+  left: 4px;
+  width: 20px;
+  height: 17px;
+  border-radius: 5px;
 }
 
 /* Thumbnails are too small for the badge, so they get a corner mark instead. */
@@ -867,6 +944,59 @@ kbd {
   font-size: 10.5px;
   font-weight: 700;
   letter-spacing: 0.06em;
+}
+
+/* Live badge shares its corner with the save button, so it stops positioning
+   itself and lets .feed-topright do it. The placeholder badge (.is-still) has
+   no sibling there and keeps the standalone absolute rule above. */
+.feed-topright {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.feed-topright .feed-badge {
+  position: static;
+}
+
+.feed-save {
+  transition: opacity 120ms ease;
+}
+
+/* Grid tiles: kept out of the way until the tile is actually being looked at.
+   The focus pane's save button (not inside .feed-tile) stays visible always. */
+.feed-tile .feed-save {
+  opacity: 0;
+}
+
+.feed-tile:hover .feed-save,
+.feed-save:focus-visible {
+  opacity: 1;
+}
+
+.feed-save-toast {
+  position: absolute;
+  top: 40px;
+  right: 8px;
+  z-index: 1;
+  max-width: calc(100% - 16px);
+  padding: 4px 9px;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feed-save-toast.is-crit {
+  color: var(--crit);
 }
 
 .feed-badge svg {
@@ -1239,9 +1369,9 @@ kbd {
   font-weight: 600;
 }
 
-/* ------------------------------------------------------------ left monitor */
+/* ----------------------------------------------------------- right monitor */
 
-.left-layout {
+.right-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 340px;
   grid-template-rows: minmax(0, 1.35fr) minmax(0, 1fr);
@@ -1250,13 +1380,13 @@ kbd {
   min-height: 0;
 }
 
-.left-cameras {
+.right-cameras {
   grid-column: 1;
   grid-row: 1;
   min-height: 0;
 }
 
-.left-rail {
+.right-rail {
   grid-column: 2;
   grid-row: 1 / span 2;
   display: flex;
@@ -1267,29 +1397,37 @@ kbd {
   padding-right: 2px;
 }
 
-.left-console {
+.right-console {
   grid-column: 1;
   grid-row: 2;
   min-height: 0;
 }
 
+/* Log folded away: the cameras take the freed row. */
+.right-layout.is-logs-collapsed {
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
 @media (max-width: 1200px) {
-  .left-layout {
+  .right-layout {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(220px, 1fr) auto minmax(180px, 1fr);
     overflow-y: auto;
   }
-  .left-cameras,
-  .left-rail,
-  .left-console {
+  .right-cameras,
+  .right-rail,
+  .right-console {
     grid-column: 1;
   }
-  .left-rail {
+  .right-rail {
     grid-row: 2;
     overflow: visible;
   }
-  .left-console {
+  .right-console {
     grid-row: 3;
+  }
+  .right-layout.is-logs-collapsed {
+    grid-template-rows: minmax(220px, 1fr) auto auto;
   }
 }
 
@@ -1527,6 +1665,20 @@ kbd {
 .field > span {
   font-size: 11.5px;
   color: var(--text-dim);
+}
+
+.field-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+
+.field-check input {
+  margin: 0;
+  flex: none;
 }
 
 .field input,

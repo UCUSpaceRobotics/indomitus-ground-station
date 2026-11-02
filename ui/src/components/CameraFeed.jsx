@@ -1,10 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CameraOff, Image as ImageIcon, RefreshCw, Radio, RotateCw } from 'lucide-react';
-import { VIDEO_MODES, isDirectUrl, mjpegUrl, placeholderFor, useConfig } from '../config';
+import {
+  CameraOff,
+  Image as ImageIcon,
+  RefreshCw,
+  Radio,
+  RotateCw,
+  Save,
+  Video,
+  VideoOff,
+} from 'lucide-react';
+import { VIDEO_MODES, isDirectUrl, mjpegUrl, placeholderFor, snapshotUrl, useConfig } from '../config';
 import { useTopic, useTick, isStale } from '../ros/useTopic';
 import { fmtAge, fmtNumber, stampToMs } from '../lib/format';
 import { rotateCamera, useRotation } from '../lib/rotation';
 import { paintMirror, drawMirror, subscribeMirror } from '../lib/frameMirror';
+import { toggleVideo, useVideoOn } from '../lib/videoStream';
+import { blobFromBase64, saveFrameBlob, saveMjpegFrame } from '../lib/saveFrame';
 
 const RETRY_BASE_MS = 1000;
 const RETRY_MAX_MS = 15_000;
@@ -79,7 +90,7 @@ function MjpegImage({ src, alt, cameraId, onStatus }) {
  * Thumbnail strip: shows the last frame `frameMirror` has for this camera,
  * with no request of its own — a camera not currently the focused pane opens
  * no connection, so the rover neither captures nor encodes it (see
- * cameras/camera_mjpeg_server.py). Redraws only when a stream open elsewhere
+ * rover_cameras/mjpeg_http.py in indomitus-rover-core). Redraws only when a stream open elsewhere
  * (the main pane, or a grid tile) paints a new frame into the mirror.
  */
 function MirrorCanvas({ alt, cameraId, onStatus }) {
@@ -123,10 +134,14 @@ export default function CameraFeed({ camera, variant = 'main', className = '' })
 
   const [httpStatus, setHttpStatus] = useState('connecting');
   const [reloadKey, setReloadKey] = useState(0);
+  const [saveToast, setSaveToast] = useState(null);
   const now = useTick(1000);
   // Shared across every pane showing this camera — thumbnail, main and the
   // fullscreen route rotate together.
   const rotation = useRotation(camera.id);
+  // Switched off means off at the source: no <img>, no subscription, so this
+  // camera costs the link nothing until it is switched back on.
+  const videoOn = useVideoOn(camera.id);
 
   const handleStatus = useCallback((next) => setHttpStatus(next), []);
   const reload = useCallback(() => {
@@ -134,29 +149,85 @@ export default function CameraFeed({ camera, variant = 'main', className = '' })
     setReloadKey((k) => k + 1);
   }, []);
 
+  // Auto-dismiss the "saved"/error pop after a few seconds.
+  useEffect(() => {
+    if (!saveToast) return undefined;
+    const timer = setTimeout(() => setSaveToast(null), 3000);
+    return () => clearTimeout(timer);
+  }, [saveToast]);
+
   // 33 ms, so a 30 fps publisher is not throttled down to 15 in the main pane.
   // rosbridge drops frames to honour this, and the drop happens *after* the
   // rover has already put them on the link — so this trades browser and
   // websocket load, never link bandwidth. Thumbnails stay at 1 fps.
   const frameIntervalMs = isThumb ? 1000 : 33;
-  const rosFeed = useTopic(`${camera.topic}/compressed`, 'sensor_msgs/CompressedImage', {
-    enabled: rosMode,
+  const rosFeed = useTopic(camera.topic, 'sensor_msgs/CompressedImage', {
+    enabled: rosMode && videoOn,
     throttleMs: frameIntervalMs,
     queueLength: 1,
     renderMs: 0,
   });
+
+  /**
+   * Deliberately not a canvas capture. The camera servers (web_video_server,
+   * rover_cameras) are cross-origin from the UI, and web_video_server sends no
+   * CORS headers, so drawing their frames onto a `<canvas>` taints it — reading it
+   * back with `toBlob()` throws a SecurityError ("the operation is
+   * insecure") in every browser, not just Firefox. The ROS transport hands
+   * the frame over as base64 directly, so it is decoded straight to a Blob;
+   * the MJPEG transport re-fetches one still frame instead — see
+   * lib/saveFrame.js for what happens when that fetch is itself blocked.
+   */
+  const handleSave = useCallback(
+    async (event) => {
+      // Grid tiles are themselves buttons (see CameraGrid); without this the
+      // click also bubbles up and switches the view to this camera.
+      event.stopPropagation();
+      const opts = { allowDownloadFallback: config.screenshotDownloadFallback };
+      try {
+        let result;
+        if (rosMode) {
+          if (!rosFeed.message?.data) throw new Error('No frame available yet.');
+          const mime = String(rosFeed.message.format || '').includes('png')
+            ? 'image/png'
+            : 'image/jpeg';
+          const ext = mime === 'image/png' ? 'png' : 'jpg';
+          result = await saveFrameBlob(blobFromBase64(rosFeed.message.data, mime), camera.name, ext, opts);
+        } else {
+          result = await saveMjpegFrame(snapshotUrl(config, camera.topic), camera.name, opts);
+        }
+        setSaveToast({
+          tone: 'ok',
+          text: result.viaFallback
+            ? `Downloaded ${result.filename} (folder saving unavailable — check your browser's downloads)`
+            : `Saved ${result.filename}`,
+        });
+      } catch (err) {
+        setSaveToast({ tone: 'crit', text: String(err.message || err) });
+      }
+    },
+    [rosMode, rosFeed.message, camera.name, camera.topic, config],
+  );
 
   const rosStale = isStale(rosFeed.receivedAt, now, Math.max(3000, frameIntervalMs * 5));
   let status = httpStatus;
   if (rosMode) {
     status = rosFeed.receivedAt === 0 ? 'connecting' : rosStale ? 'error' : 'live';
   }
+  // Its own status, not 'error': a switched-off camera is a choice, and must
+  // not read as a feed that has failed — nor trip the retry button.
+  if (!videoOn) status = 'off';
 
   const stampMs = stampToMs(rosFeed.message?.header?.stamp);
   const frameAgeMs = rosFeed.receivedAt ? now - rosFeed.receivedAt : null;
 
   let media = null;
-  if (rosMode) {
+  if (!videoOn) {
+    // Nothing mounted at all. Both transports tear down on unmount — the <img>
+    // drops the multipart connection, useTopic unsubscribes — which is what
+    // actually stops the traffic.
+    media = null;
+  } else if (rosMode) {
     if (rosFeed.message?.data) {
       const mime = String(rosFeed.message.format || '').includes('png') ? 'image/png' : 'image/jpeg';
       media = (
@@ -180,7 +251,7 @@ export default function CameraFeed({ camera, variant = 'main', className = '' })
   // A stand-in still, shown only while the real feed is down. Always badged, so
   // it cannot be read as live video.
   const placeholder = placeholderFor(camera);
-  const showStill = status !== 'live' && Boolean(placeholder);
+  const showStill = videoOn && status !== 'live' && Boolean(placeholder);
 
   return (
     <div
@@ -194,11 +265,15 @@ export default function CameraFeed({ camera, variant = 'main', className = '' })
 
       {status !== 'live' && !showStill && (
         <div className="feed-placeholder">
-          <CameraOff size={isThumb ? 18 : 34} />
+          {videoOn ? <CameraOff size={isThumb ? 18 : 34} /> : <VideoOff size={isThumb ? 18 : 34} />}
           <span className="feed-placeholder-text">
-            {status === 'connecting' ? 'Acquiring…' : 'No signal'}
+            {!videoOn ? 'Video off' : status === 'connecting' ? 'Acquiring…' : 'No signal'}
           </span>
-          {!isThumb && <span className="mono feed-placeholder-topic">{camera.topic}</span>}
+          {!isThumb && (
+            <span className="mono feed-placeholder-topic">
+              {videoOn ? camera.topic : 'not streaming — switch on to receive'}
+            </span>
+          )}
         </div>
       )}
 
@@ -211,6 +286,37 @@ export default function CameraFeed({ camera, variant = 'main', className = '' })
           </span>
         </div>
       )}
+
+      {/* The traffic switch. A <span role="switch"> rather than a <button>:
+          grid tiles and thumbnails are themselves buttons (see CameraGrid), and
+          a nested <button> is what browsers actually mis-render. Absolutely
+          positioned like the rotate and retry controls, so no pane changes size
+          and nothing moves. */}
+      <span
+        role="switch"
+        tabIndex={0}
+        aria-checked={videoOn}
+        className={`feed-power ${videoOn ? 'is-on' : 'is-off'}`}
+        onClick={(event) => {
+          // Tiles switch the view on click; flipping the stream must not.
+          event.stopPropagation();
+          toggleVideo(camera.id);
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          event.stopPropagation();
+          toggleVideo(camera.id);
+        }}
+        title={
+          videoOn
+            ? `Stop receiving ${camera.name} (saves link bandwidth)`
+            : `Start receiving ${camera.name}`
+        }
+        aria-label={`${camera.name} video stream`}
+      >
+        {videoOn ? <Video size={isThumb ? 11 : 13} /> : <VideoOff size={isThumb ? 11 : 13} />}
+      </span>
 
       {/* Rotates the picture, not the camera — see lib/rotation.js. Bottom
           left, so it never lands on the Retry button above it. Thumbnails are
@@ -230,28 +336,47 @@ export default function CameraFeed({ camera, variant = 'main', className = '' })
 
       {/* Only in the main pane: tiles are themselves buttons, and a button
           inside a button is invalid. */}
-      {status !== 'live' && variant === 'main' && !rosMode && (
+      {videoOn && status !== 'live' && variant === 'main' && !rosMode && (
         <button type="button" className="btn btn-sm feed-retry" onClick={reload}>
           <RefreshCw size={13} /> Retry
         </button>
       )}
 
+      {/* Top right: LIVE badge and the save-frame button share this corner.
+          Save only exists while there is an actual frame to save — no feed,
+          no button. In the focus pane it is always visible; on a grid tile it
+          only appears on hover (see .feed-tile .feed-save in index.css). */}
       {status === 'live' && !isThumb && (
-        <div className="feed-badge">
-          <Radio size={12} />
-          LIVE
-          {rosMode && rosFeed.hz > 0 && (
-            <span className="feed-badge-stat">{fmtNumber(rosFeed.hz, 1)} fps</span>
-          )}
-          {rosMode && frameAgeMs !== null && (
-            <span className="feed-badge-stat">{fmtAge(frameAgeMs)}</span>
-          )}
-          {rosMode && stampMs !== null && rosFeed.receivedAt > 0 && (
-            <span className="feed-badge-stat" title="Rover timestamp to browser arrival">
-              {fmtAge(rosFeed.receivedAt - stampMs)} link
-            </span>
-          )}
+        <div className="feed-topright">
+          <button
+            type="button"
+            className="btn btn-sm feed-save"
+            onClick={handleSave}
+            title={`Save frame from ${camera.name}`}
+            aria-label={`Save current frame from ${camera.name}`}
+          >
+            <Save size={13} />
+          </button>
+          <div className="feed-badge">
+            <Radio size={12} />
+            LIVE
+            {rosMode && rosFeed.hz > 0 && (
+              <span className="feed-badge-stat">{fmtNumber(rosFeed.hz, 1)} fps</span>
+            )}
+            {rosMode && frameAgeMs !== null && (
+              <span className="feed-badge-stat">{fmtAge(frameAgeMs)}</span>
+            )}
+            {rosMode && stampMs !== null && rosFeed.receivedAt > 0 && (
+              <span className="feed-badge-stat" title="Rover timestamp to browser arrival">
+                {fmtAge(rosFeed.receivedAt - stampMs)} link
+              </span>
+            )}
+          </div>
         </div>
+      )}
+
+      {saveToast && !isThumb && (
+        <div className={`feed-save-toast is-${saveToast.tone}`}>{saveToast.text}</div>
       )}
     </div>
   );

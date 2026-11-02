@@ -22,7 +22,11 @@ export const CUSTOM_KEY = 'custom';
  */
 export const ROVER_FUNCTIONS = [
   { key: 'drive_power', label: 'Drive power', group: 'Drive', setbool: '/rover/drive/power', trigger: '/rover/drive/power/toggle' },
-  { key: 'drive_compact', label: 'Drive compact', group: 'Drive', setbool: '/rover/drive/compact', trigger: '/rover/drive/compact/toggle' },
+  // Absolute form only, though the rover advertises the toggle twin too: both
+  // console boards latch, so a bind here always knows its own position, and
+  // inverting the rover's state on every edge let the switch and compact mode
+  // drift apart. See the same note in switch_bindings.py.
+  { key: 'drive_compact', label: 'Drive compact', group: 'Drive', setbool: '/rover/drive/compact', trigger: '' },
   // No absolute form: clearing a fault is an action, not a state to hold.
   { key: 'drive_clear_errors', label: 'Clear drive errors', group: 'Drive', setbool: '', trigger: '/rover/drive/clear_errors' },
   { key: 'spotlight', label: 'Spotlight', group: 'Lights', setbool: '/rover/lights/spotlight', trigger: '/rover/lights/spotlight/toggle' },
@@ -162,6 +166,14 @@ export const CONSOLE_MODES = [
     calls: 'speed \u00d70.1',
     hint: 'Scales the whole command — yaw included, so a turn keeps its shape '
       + 'instead of tightening as you slow down.',
+  },
+  {
+    key: 'boostBind',
+    name: 'Boost',
+    calls: 'speed \u00d71.2',
+    hint: 'Granny\u2019s mirror, for open ground: scales the whole command \u2014 yaw '
+      + 'included \u2014 so a turn keeps its shape. Applied after the speed clamp, so '
+      + 'it deliberately drives above the normal ceiling. Granny wins if both are on.',
   },
   {
     key: 'muteBind',

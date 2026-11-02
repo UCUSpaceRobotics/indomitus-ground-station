@@ -9,3 +9,11 @@ docker/fastdds_rover_link.xml
 
 .env
 .claude/
+
+# Editor settings are per machine (absolute paths). Subprojects keep their own
+# .vscode/extensions.json; PlatformIO's generated files are ignored there.
+/.vscode/
+
+# Backups belong in git history, not in the tree.
+*.bak
+*.bak.*

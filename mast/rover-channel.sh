@@ -1,5 +1,5 @@
 #!/bin/bash
-# Change the ROVER Wi-Fi channel AND recover ROS on the new channel, in one go.
+# Change the ROVER Wi-Fi channel and wait for the link to come back.
 #
 #     ROVER_PW=... ./mast/rover-channel.sh 149            # 5 GHz channel 149
 #     ROVER_PW=... ./mast/rover-channel.sh 44 --width 20
@@ -11,7 +11,8 @@
 #      /etc/hostapd/rover-ap.conf and restarts rover-ap.service;
 #   2. reassociates the mast Pi (it does not reconnect on its own after an AP
 #      restart) and waits for the link to come back;
-#   3. restarts the rover-side ROS via rover-up.sh so the feeds re-establish.
+#   3. tells how to restart rover.launch.py if topics do not come back
+#      (it runs in tmux session `core`: scripts/enter_container.sh rover core).
 #
 # CAVEAT: this edits the LIVE rover-ap.conf. mast/restore-link.sh restores that
 # file from a canned config (rover-ap-rtw88-vht40.conf, ch36) on its next run,
@@ -148,7 +149,7 @@ else
     did "rover back at $ROVER_LINK_IP"
 fi
 
-# ------------------------------------------------------------- restart ROS
-head_ "Recover ROS on the new channel"
-ROVER_PW="$ROVER_PW" ROVER_SSH="$ROVER_SSH" ROVER_LIFELINE="$ROVER_LIFELINE" \
-    exec "$REPO/mast/rover-up.sh" --skip-link --no-gs --no-ui $([ "$DRY" = 1 ] && echo --dry)
+# ------------------------------------------------------------- ROS
+head_ "ROS"
+say "if GS topics do not come back, restart the launch in tmux session 'core':"
+say "  scripts/enter_container.sh rover core    # Ctrl-C, Up, Enter"

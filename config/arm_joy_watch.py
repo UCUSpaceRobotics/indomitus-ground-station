@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Live readout of /arm/joy in SDL slot names, for checking the panel mapping."""
+"""Live readout of /gs/arm/joy in SDL slot names, for checking the panel mapping."""
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Joy
@@ -16,8 +16,8 @@ class Watch(Node):
     def __init__(self):
         super().__init__('arm_joy_watch')
         self.pb, self.pa = None, None
-        self.create_subscription(Joy, '/arm/joy', self.cb, 10)
-        print('watching /arm/joy — press one control at a time\n')
+        self.create_subscription(Joy, '/gs/arm/joy', self.cb, 10)
+        print('watching /gs/arm/joy — press one control at a time\n')
 
     def cb(self, m):
         if self.pb is not None:

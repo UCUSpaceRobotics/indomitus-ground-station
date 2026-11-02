@@ -52,10 +52,23 @@ def generate_launch_description():
         description='YAML file the settings dialog saves rover-function binds to'
     )
 
+    # The other half of what the settings dialog applies. The binds above live
+    # on gs_interpreter; the steering mode, strafe, granny and mute are
+    # parameters of joy_to_cmd_vel_node, and until this file existed they were
+    # the one part of a control scheme that did not survive a restart.
+    drive_modes_file_arg = DeclareLaunchArgument(
+        'drive_modes_file',
+        default_value=EnvironmentVariable(
+            'DRIVE_MODES_FILE', default_value='/work/config/gs_drive_modes.yaml'),
+        description='YAML file the settings dialog saves the console modes to'
+    )
+
     arm_joy_topic_arg = DeclareLaunchArgument(
         'arm_joy_topic',
-        default_value=EnvironmentVariable('ARM_JOY_TOPIC', default_value='/arm/joy'),
-        description="Topic the arm's gamepad_servo_node should be remapped onto"
+        default_value=EnvironmentVariable('ARM_JOY_TOPIC', default_value='arm/joy'),
+        description="Topic the arm's gamepad_servo_node should be remapped onto. "
+                    "Relative, so it lands under the /gs namespace gs.launch.py pushes; "
+                    "give it a leading slash to place it at the graph root instead"
     )
 
     # Which console control calls which rover service. Shipped defaults; the
@@ -75,6 +88,7 @@ def generate_launch_description():
         calibration_file_arg,
         arm_bindings_file_arg,
         gs_bindings_file_arg,
+        drive_modes_file_arg,
         arm_joy_topic_arg,
         # One node, both boards. They are two USB ports but one panel, and
         # the shared serial reader is what lets either board reconnect on its
@@ -109,7 +123,7 @@ def generate_launch_description():
             executable='joy_to_cmd_vel_node',
             name='joy_to_cmd_vel_node',
             parameters=[{
-                # Same mapping as rover_teleop/config/joy.yaml on the rover:
+                # Same layout as the rover's gamepad teleop:
                 # J0Y forward/back, J0X strafe, J1X yaw.
                 'linear_x_axis': 1,
                 'linear_y_axis': 0,
@@ -129,12 +143,19 @@ def generate_launch_description():
                 # when it is 1. Both nodes read the same switch.
                 'mode_switch_index': 0,
                 'mode_switch_value': 0,
+                # Where save_modes writes and where startup restores from. The
+                # steering mode, strafe, granny and mute defaults stay in the
+                # node; this file only overrides them once a console has been
+                # configured, so a fresh checkout still comes up on 'row'.
+                'modes_file': LaunchConfiguration('drive_modes_file'),
             }],
             remappings=[
-                # /cmd_vel is twist_mux's OUTPUT on the rover. External sources
-                # feed an input: cmd_vel_gs (priority 10), so the onboard
-                # gamepad on cmd_vel_joy (priority 100) always wins.
+                # /cmd_vel is twist_mux's OUTPUT on the rover; the GS feeds its
+                # cmd_vel_gs input (priority: README "Driving the Rover").
                 ('cmd_vel', '/rover/cmd_vel_gs'),
+                # Read by the rover's swerve controller. Not a twist_mux input:
+                # it is not a command, it is the dynamics to follow it with.
+                ('drive_boost', '/rover/drive_boost'),
             ],
             output='screen'
         ),
@@ -166,7 +187,7 @@ def generate_launch_description():
         # The console, dressed as an SDL gamepad, for the arm's
         # gamepad_servo_node. Its own topic rather than /joy: /joy already
         # carries the console's raw frame, which is a different layout
-        # entirely. Point the rover's gamepad node at /arm/joy.
+        # entirely. Point the rover's gamepad node at /gs/arm/joy.
         Node(
             package='gs_joy',
             executable='arm_gamepad_node',

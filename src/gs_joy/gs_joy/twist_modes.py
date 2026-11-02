@@ -1,10 +1,9 @@
 """Two ways to turn three stick axes into a Twist.
 
-Mirrors the two branches of ``_publish_timer_cb`` in the rover's
-``rover_teleop/joystick_interpreter_node.py``, so the console and the onboard
-gamepad steer the rover the same way rather than two ways that merely look
-alike. The rover keeps its copy; this one exists because the console builds its
-own Twist on ``/rover/cmd_vel_gs`` instead of sending the rover a Joy.
+Same two modes as the rover's gamepad teleop (rover_teleop), so the console and
+the onboard gamepad steer the rover the same way. The rover keeps its copy; this
+one exists because the console builds its own Twist on ``/rover/cmd_vel_gs``
+instead of sending the rover a Joy.
 
 ROW (the default, and what the console did before this existed)
     The yaw stick *is* the yaw rate. Direct, predictable, and what you want
@@ -104,6 +103,24 @@ def apply_granny(vx, vy, wz, scale, enabled):
     an operator has lined up in curvature mode is the arc they still get —
     scaling only the linear part would tighten every turn as a side effect of
     slowing down.
+    """
+    if not enabled:
+        return float(vx), float(vy), float(wz)
+    scale = float(scale)
+    return float(vx) * scale, float(vy) * scale, float(wz) * scale
+
+
+def apply_boost(vx, vy, wz, scale, enabled):
+    """Scale the whole command up for open ground.
+
+    The mirror of apply_granny, and scaled the same way — yaw included — so a
+    boost holds the arc instead of widening every turn as a side effect of
+    speeding up. Applied after the mode and after clamp_linear, which is what
+    makes it a deliberate overspeed: the boost is meant to exceed the ceiling
+    normal driving is held to, not to be clipped back to it.
+
+    Granny and boost are never both live; the caller resolves that, and granny
+    wins. See active_boost in joy_to_cmd_vel_node.
     """
     if not enabled:
         return float(vx), float(vy), float(wz)

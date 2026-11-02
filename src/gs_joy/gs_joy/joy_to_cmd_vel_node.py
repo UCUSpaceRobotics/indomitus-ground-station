@@ -1,15 +1,22 @@
+import os
+import shutil
+
 import rclpy
+import yaml
 from rcl_interfaces.msg import SetParametersResult
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from sensor_msgs.msg import Joy
-from std_msgs.msg import Int32MultiArray
+from std_msgs.msg import Bool, Int32MultiArray
+from std_srvs.srv import Trigger
 from geometry_msgs.msg import Twist
 
 from gs_joy.twist_modes import (
     MODE_CURVATURE,
     MODE_ROW,
     MODES,
+    apply_boost,
     apply_deadzone,
     apply_granny,
     build_twist,
@@ -21,6 +28,53 @@ from gs_joy.twist_modes import (
 SOURCE_JOY = 'joy'
 SOURCE_SWITCHES = 'switches'
 
+#: Node key the modes file is written under. '/**' rather than the node's own
+#: name so the file keeps loading whatever namespace gs_bringup pushes this node
+#: into, the same reason gs_bindings.yaml uses it.
+MODES_NODE_KEY = '/**'
+
+#: Keys read back from an older file that named the node explicitly.
+LEGACY_MODES_KEYS = (MODES_NODE_KEY, '/gs/joy_to_cmd_vel_node', 'joy_to_cmd_vel_node')
+
+#: Speed ceilings the settings dialog may set, as the largest value each
+#: parameter accepts. A typo in a text box must not command a runaway rover, so
+#: these bound the UI even though the launch file can still go further.
+SPEED_PARAM_LIMITS = {
+    'max_linear_speed': 3.0,
+    'linear_x_scale': 3.0,
+    'linear_y_scale': 3.0,
+    'granny_speed_scale': 1.0,
+    'boost_speed_scale': 10.0,
+}
+
+#: The console modes and speed limits the settings dialog owns, and the only
+#: parameters `save_modes` writes. Everything else on this node is tuning that
+#: belongs in the launch file - axis mapping, scales, deadzone, publish rate -
+#: not state an operator flips mid-run, and a saved copy of it would quietly
+#: outrank the launch file for the rest of the console's life.
+SAVED_MODE_PARAMS = (
+    'max_linear_speed',
+    'linear_x_scale',
+    'linear_y_scale',
+    'granny_speed_scale',
+    'boost_speed_scale',
+    'twist_mode',
+    'twist_mode_switch_source',
+    'twist_mode_switch_index',
+    'vy_enabled',
+    'vy_switch_source',
+    'vy_switch_index',
+    'granny_mode',
+    'granny_switch_source',
+    'granny_switch_index',
+    'boost_mode',
+    'boost_switch_source',
+    'boost_switch_index',
+    'mute',
+    'mute_switch_source',
+    'mute_switch_index',
+)
+
 
 class JoyToCmdVelNode(Node):
     def __init__(self):
@@ -28,14 +82,12 @@ class JoyToCmdVelNode(Node):
 
         # Axis indices into the 6-axis Joy from console_boards:
         #   0 J0X  1 J0Y  2 J1X  3 J1Y  4 J2X  5 J2Y
-        # Mirrors rover_teleop/config/joy.yaml on the rover, so the panel and the
-        # bluetooth gamepad steer identically: J0 translates (forward/back and
-        # strafe), J1X yaws. Set an index to -1 to leave that component at zero.
+        # Same layout as the rover's gamepad teleop: J0 translates (forward/back
+        # and strafe), J1X yaws. Set an index to -1 to leave that component at zero.
         self.declare_parameter('linear_x_axis', 1)
         self.declare_parameter('linear_y_axis', 0)
         self.declare_parameter('angular_z_axis', 2)
-        # Scales match rover_teleop; the swerve controller clamps to
-        # max_linear_speed / max_angular_speed (1.0 each) anyway.
+        # The rover clamps to its own max speeds anyway.
         self.declare_parameter('linear_x_scale', 0.5)
         self.declare_parameter('linear_y_scale', 0.5)
         self.declare_parameter('angular_z_scale', 1.0)
@@ -72,14 +124,20 @@ class JoyToCmdVelNode(Node):
         # This throttles only the steady stream. Both stop paths (mode handover
         # and the watchdog) bypass it: a stop must never wait for a rate limit.
         self.declare_parameter('publish_rate', 50.0)
+        # How often the boost flag is re-asserted to the rover, independent of
+        # the Twist rate. The rover treats a stale flag as "not boosting", so
+        # this is a heartbeat and not just an edge notification: without it a
+        # dropped link would leave the rover on boost dynamics indefinitely.
+        # 2 Hz of a Bool is nothing next to the Twist stream, even over LoRa.
+        self.declare_parameter('boost_state_rate', 2.0)
 
         # ── steering mode ────────────────────────────────────────────────────
         # 'row'       the yaw stick is the yaw rate — direct, and what strafing
         #             and precise placement want.
         # 'curvature' the yaw stick sets 1/R and yaw is derived from commanded
         #             speed, so one arc holds across the speed range.
-        # Same two modes as rover_teleop/joystick_interpreter_node, so the
-        # console and the onboard gamepad steer alike.
+        # Same two modes as the rover's gamepad teleop, so the console and the
+        # onboard gamepad steer alike.
         self.declare_parameter('twist_mode', MODE_ROW)
         # Tightest turn the yaw stick can ask for at full deflection, as
         # curvature 1/R. 2.0 means R = 0.5 m, an ICR inside the wheelbase.
@@ -107,12 +165,29 @@ class JoyToCmdVelNode(Node):
         self.declare_parameter('vy_switch_value', 1)
 
         # ── granny mode ──────────────────────────────────────────────────────
-        # Everything scaled down for fine work, exactly as rover_teleop does it.
+        # Everything scaled down for fine work, as on the rover's gamepad.
         self.declare_parameter('granny_speed_scale', 0.1)
         self.declare_parameter('granny_mode', False)
         self.declare_parameter('granny_switch_source', SOURCE_SWITCHES)
         self.declare_parameter('granny_switch_index', -1)
         self.declare_parameter('granny_switch_value', 1)
+
+        # ── boost ────────────────────────────────────────────────────────────
+        # Granny's mirror: everything scaled up for open ground. Applied after
+        # max_linear_speed, so it is a deliberate overspeed — but the rover's
+        # controller still clamps to its own max speed, so anything above that
+        # just flattens the top of the stick.
+        #
+        # Bound by default, unlike the other modes: switch 14 is the one free
+        # latching control on the button board — cameras hold 0-7, the rover
+        # functions in gs_bindings.yaml hold 8 and 10-13, 17 and 22, and every
+        # self-resetting button belongs to the arm. Rebind it in the settings
+        # dialog like any other console mode.
+        self.declare_parameter('boost_speed_scale', 5.0)
+        self.declare_parameter('boost_mode', False)
+        self.declare_parameter('boost_switch_source', SOURCE_SWITCHES)
+        self.declare_parameter('boost_switch_index', 14)
+        self.declare_parameter('boost_switch_value', 1)
 
         # ── mute ─────────────────────────────────────────────────────────────
         # Stop commanding the rover from this console without killing the node,
@@ -126,6 +201,20 @@ class JoyToCmdVelNode(Node):
         self.declare_parameter('mute_switch_source', SOURCE_SWITCHES)
         self.declare_parameter('mute_switch_index', -1)
         self.declare_parameter('mute_switch_value', 1)
+
+        # ── persistence ──────────────────────────────────────────────────────
+        # Where ~/save_modes writes and where startup restores from. Empty
+        # disables both, which is what a bench run without /work mounted wants.
+        # On /work rather than the package share for the same reason
+        # gs_bindings.yaml is: under --symlink-install the share path is a
+        # symlink back into the repo, so saving would rewrite a tracked file.
+        self.declare_parameter('modes_file', '')
+        self.modes_file = self.get_parameter('modes_file').value
+
+        # Before the caching block below and before the on-set callback is
+        # registered, so every attribute is cached from the restored value and
+        # nothing is validated twice.
+        self._restore_modes()
 
         self.mode_switch_index = self.get_parameter('mode_switch_index').get_parameter_value().integer_value
         self.mode_switch_value = self.get_parameter('mode_switch_value').get_parameter_value().integer_value
@@ -186,6 +275,16 @@ class JoyToCmdVelNode(Node):
         self.granny_switch_value = self.get_parameter(
             'granny_switch_value').get_parameter_value().integer_value
 
+        self.boost_speed_scale = self.get_parameter(
+            'boost_speed_scale').get_parameter_value().double_value
+        self.boost_mode = self.get_parameter('boost_mode').get_parameter_value().bool_value
+        self.boost_switch_source = self.get_parameter(
+            'boost_switch_source').get_parameter_value().string_value
+        self.boost_switch_index = self.get_parameter(
+            'boost_switch_index').get_parameter_value().integer_value
+        self.boost_switch_value = self.get_parameter(
+            'boost_switch_value').get_parameter_value().integer_value
+
         self.mute = self.get_parameter('mute').get_parameter_value().bool_value
         self.mute_switch_source = self.get_parameter(
             'mute_switch_source').get_parameter_value().string_value
@@ -194,6 +293,7 @@ class JoyToCmdVelNode(Node):
         self.mute_switch_value = self.get_parameter(
             'mute_switch_value').get_parameter_value().integer_value
         self._logged_granny = None
+        self._logged_boost = None
         self._logged_mute = None
 
         # Last /switches frame, for a mode switch on the button board. That
@@ -225,10 +325,155 @@ class JoyToCmdVelNode(Node):
         # Publisher
         self.publisher_ = self.create_publisher(Twist, 'cmd_vel', 10)
 
+        # Boost, as its own flag rather than folded into the Twist. The rover's
+        # speed clamp would swallow a scale applied here; what boost actually
+        # buys on open ground is the controller's accel/decel pair, and only
+        # the controller can swap that. See boost_max_accel in controllers.yaml.
+        self.boost_publisher_ = self.create_publisher(Bool, 'drive_boost', 10)
+        self._boost_state = False
+
+        boost_state_rate = self.get_parameter(
+            'boost_state_rate').get_parameter_value().double_value
+        if boost_state_rate > 0.0:
+            self.create_timer(1.0 / boost_state_rate, self._publish_boost_state)
+
+        # The settings dialog calls this straight after its set_parameters, so
+        # applying a control scheme and keeping it are one press rather than
+        # two — the same pairing gs_interpreter offers for the function binds.
+        self.create_service(Trigger, '~/save_modes', self._on_save_modes)
+
         if self.joy_timeout > 0.0:
             self.watchdog = self.create_timer(self.joy_timeout / 2.0, self.check_timeout)
 
         self.get_logger().info("Joy to CmdVel Node started")
+
+    # ── persistence ──────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _saved_mode_value(name, value):
+        """Type- and range-check one saved mode, as _on_set_parameters would.
+
+        A saved file is not trusted input the way a live set_parameters call is:
+        nothing validated it on the way in beyond what the dialog sent, and it
+        can be a year old and edited by hand. A bad entry is dropped on its own
+        rather than taking the rest of the file with it.
+        """
+        if name == 'twist_mode':
+            if value not in MODES:
+                raise ValueError(f'{value!r} is not one of {MODES}')
+            return str(value)
+        if name.endswith('_source'):
+            if value not in (SOURCE_JOY, SOURCE_SWITCHES):
+                raise ValueError(
+                    f"{value!r} is not '{SOURCE_JOY}' or '{SOURCE_SWITCHES}'")
+            return str(value)
+        if name.endswith('_index'):
+            return int(value)
+        if name in SPEED_PARAM_LIMITS:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f'{value!r} is not a number')
+            if not 0.0 <= float(value) <= SPEED_PARAM_LIMITS[name]:
+                raise ValueError(
+                    f'{value!r} is outside 0..{SPEED_PARAM_LIMITS[name]}')
+            return float(value)
+        if not isinstance(value, bool):
+            raise ValueError(f'{value!r} is not true or false')
+        return value
+
+    def _restore_modes(self):
+        """Re-apply the console modes ``save_modes`` last wrote.
+
+        The settings dialog sets these as parameters, so until this they lived
+        only in the running node: every GS restart dropped the steering mode,
+        strafe, granny and mute back to the launch file's defaults while the UI
+        went on showing what the operator had chosen out of its own
+        localStorage. That is worse than losing them outright — the control box
+        labelled a switch "Granny mode" and the switch did nothing, with no
+        error anywhere to say the node had never heard of it.
+
+        The binds this node's sibling owns already survive a restart, via
+        gs_interpreter's bindings_file; this is the other half of the same
+        gesture, which the dialog applies and saves in one press.
+        """
+        path = self.modes_file
+        if not path or not os.path.exists(path):
+            return
+
+        try:
+            with open(path) as handle:
+                document = yaml.safe_load(handle) or {}
+        except (OSError, yaml.YAMLError) as exc:
+            self.get_logger().error(
+                f'cannot read {path}: {exc} - keeping the launch defaults')
+            return
+
+        params = {}
+        for key in LEGACY_MODES_KEYS:
+            section = document.get(key)
+            if isinstance(section, dict) and 'ros__parameters' in section:
+                params = section['ros__parameters'] or {}
+                break
+
+        restore = []
+        for name in SAVED_MODE_PARAMS:
+            if name not in params:
+                continue
+            try:
+                restore.append(Parameter(
+                    name, value=self._saved_mode_value(name, params[name])))
+            except (TypeError, ValueError) as exc:
+                self.get_logger().error(
+                    f'{path}: {name}: {exc} - left at its default')
+        if not restore:
+            return
+
+        self.set_parameters(restore)
+        self.get_logger().info(
+            f'restored {len(restore)} console modes from {path}')
+        # Worth its own line at WARN: a console that comes up muted publishes
+        # nothing, which from the driver's seat is indistinguishable from a dead
+        # node or a dead link, and the reason is a switch set before a restart.
+        if params.get('mute'):
+            self.get_logger().warn(
+                'restored with mute ON - this console is NOT commanding the rover')
+
+    def _on_save_modes(self, request, response):
+        """Write the console modes back, so the next start comes up like this one.
+
+        Saves the parameter values, not what a bound switch currently resolves
+        them to: a switch re-asserts itself on the first frame after startup,
+        and its momentary position is not a setting anyone chose to keep.
+        """
+        path = self.modes_file
+        if not path:
+            response.success = False
+            response.message = 'no modes_file configured'
+            return response
+
+        try:
+            directory = os.path.dirname(path)
+            if directory:
+                os.makedirs(directory, exist_ok=True)
+            # Same reasoning as gs_interpreter's save_bindings: keep the
+            # previous file, so a save made from a console that came up on the
+            # defaults leaves something to put back.
+            if os.path.exists(path):
+                shutil.copy2(path, f'{path}.bak')
+
+            payload = {MODES_NODE_KEY: {'ros__parameters': {
+                name: self.get_parameter(name).value for name in SAVED_MODE_PARAMS
+            }}}
+            with open(path, 'w') as handle:
+                yaml.safe_dump(payload, handle, default_flow_style=False, sort_keys=True)
+            response.success = True
+            response.message = f'Console modes saved to {path}'
+            self.get_logger().info(response.message)
+        except Exception as exc:
+            response.success = False
+            response.message = f'Failed to save console modes: {exc}'
+            self.get_logger().error(response.message)
+
+        return response
 
     def _mode_param(self, value):
         if value in MODES:
@@ -273,6 +518,20 @@ class JoyToCmdVelNode(Node):
             self.granny_switch_source, self.granny_switch_index,
             self.granny_switch_value, buttons, self.granny_mode)
 
+    def active_boost(self, buttons):
+        """Boost, unless granny is also live — in which case granny wins.
+
+        Both are toggles on a panel, so both can be left on at once, and
+        multiplying them would silently give a third speed that neither switch
+        is labelled with. Granny is the one an operator flips to be careful, so
+        it is the one that decides.
+        """
+        if self.active_granny(buttons):
+            return False
+        return self._switch_says(
+            self.boost_switch_source, self.boost_switch_index,
+            self.boost_switch_value, buttons, self.boost_mode)
+
     def active_mute(self, buttons):
         return self._switch_says(
             self.mute_switch_source, self.mute_switch_index,
@@ -284,6 +543,12 @@ class JoyToCmdVelNode(Node):
                 if param.value not in MODES:
                     return SetParametersResult(
                         successful=False, reason=f'twist_mode must be one of {MODES}')
+            elif param.name in SPEED_PARAM_LIMITS:
+                limit = SPEED_PARAM_LIMITS[param.name]
+                if not 0.0 <= float(param.value) <= limit:
+                    return SetParametersResult(
+                        successful=False,
+                        reason=f'{param.name} must be in [0.0, {limit}]')
             elif param.name == 'deadzone':
                 if not 0.0 <= float(param.value) < 1.0:
                     return SetParametersResult(
@@ -291,6 +556,7 @@ class JoyToCmdVelNode(Node):
             elif param.name in ('twist_mode_switch_source',
                                 'vy_switch_source',
                                 'granny_switch_source',
+                                'boost_switch_source',
                                 'mute_switch_source'):
                 if param.value not in (SOURCE_JOY, SOURCE_SWITCHES):
                     return SetParametersResult(
@@ -341,6 +607,16 @@ class JoyToCmdVelNode(Node):
                 self.granny_switch_index = int(param.value)
             if param.name == 'granny_switch_value':
                 self.granny_switch_value = int(param.value)
+            if param.name == 'boost_speed_scale':
+                self.boost_speed_scale = float(param.value)
+            if param.name == 'boost_mode':
+                self.boost_mode = bool(param.value)
+            if param.name == 'boost_switch_source':
+                self.boost_switch_source = str(param.value)
+            if param.name == 'boost_switch_index':
+                self.boost_switch_index = int(param.value)
+            if param.name == 'boost_switch_value':
+                self.boost_switch_value = int(param.value)
             if param.name == 'mute':
                 self.mute = bool(param.value)
             if param.name == 'mute_switch_source':
@@ -369,6 +645,8 @@ class JoyToCmdVelNode(Node):
                 self.stopped = True
                 self.next_publish_deadline = None
                 self.get_logger().info('Drive mode deselected — rover stopped')
+            # Same reasoning as the mute path: the sticks are the arm's now.
+            self._set_boost_state(False)
             return
 
         if self.active_mute(msg.buttons):
@@ -379,6 +657,10 @@ class JoyToCmdVelNode(Node):
                 self.publisher_.publish(Twist())
                 self.stopped = True
                 self.next_publish_deadline = None
+            # Drop boost with the output. Muted means something else is driving
+            # — the onboard gamepad, nav2 — and this console has no business
+            # setting the dynamics for a command it is not sending.
+            self._set_boost_state(False)
             if self._logged_mute is not True:
                 self.get_logger().info('Output muted — this console is not commanding the rover')
                 self._logged_mute = True
@@ -448,6 +730,15 @@ class JoyToCmdVelNode(Node):
             self._logged_granny = granny
         vx, vy, wz = apply_granny(vx, vy, wz, self.granny_speed_scale, granny)
 
+        boost = self.active_boost(msg.buttons)
+        if boost != self._logged_boost:
+            self.get_logger().info(f'Boost mode: {"ENABLED" if boost else "DISABLED"}')
+            self._logged_boost = boost
+        # On the edge as well as on the heartbeat, so flipping the switch takes
+        # effect now rather than up to half a heartbeat later.
+        self._set_boost_state(boost)
+        vx, vy, wz = apply_boost(vx, vy, wz, self.boost_speed_scale, boost)
+
         twist = Twist()
         twist.linear.x = vx
         twist.linear.y = vy
@@ -455,6 +746,29 @@ class JoyToCmdVelNode(Node):
 
         self.stopped = False
         self.publisher_.publish(twist)
+
+    def _set_boost_state(self, boost):
+        """Record the boost state, and send it immediately if it changed.
+
+        Sending only on the edge is what keeps this off the Twist rate: the
+        joy callback runs at up to 50 Hz and every one of those would otherwise
+        be a packet on a link that is sometimes LoRa. The heartbeat below is
+        what covers a lost edge.
+        """
+        boost = bool(boost)
+        if boost == self._boost_state:
+            return
+        self._boost_state = boost
+        self.boost_publisher_.publish(Bool(data=boost))
+
+    def _publish_boost_state(self):
+        """Heartbeat the current state, whether or not it changed.
+
+        The rover treats a stale flag as 'not boosting', so this is what holds
+        boost up — and what makes a console that dies mid-boost fail back to
+        normal dynamics rather than leaving the rover fast.
+        """
+        self.boost_publisher_.publish(Bool(data=self._boost_state))
 
     def check_timeout(self):
         if self.last_joy_time is None or self.stopped:
@@ -466,6 +780,10 @@ class JoyToCmdVelNode(Node):
 
         self.get_logger().warn(f"No joy message for {age:.2f}s, commanding stop")
         self.publisher_.publish(Twist())
+        # A stop is not a boosted stop. The rover would drop boost on its own
+        # once the flag went stale, but it should not spend that second braking
+        # at the boost rate on a command the operator never gave.
+        self._set_boost_state(False)
         self.stopped = True
         self.next_publish_deadline = None
 

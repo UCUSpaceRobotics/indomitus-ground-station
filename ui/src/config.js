@@ -27,17 +27,22 @@ export const VIDEO_MODES = {
 };
 
 /**
- * The Jetson Nano's cameras are NOT ROS topics — it runs Ubuntu 18.04, where
- * Humble has no binaries, so there is no v4l2_camera_node. cameras/start-cameras.sh
- * serves each one over plain HTTP instead, one port per camera counting up from
- * 8090. A camera row holding an absolute URL is read straight by the browser;
- * see isDirectUrl() below and "Cameras outside ROS" in README.md.
+ * Rover cameras are NOT read through ROS: rover_cameras (indomitus-rover-core,
+ * started by rover.launch.py) serves each one as MJPEG over HTTP, one port per
+ * camera. A camera row holding an absolute URL is read straight by the browser;
+ * see isDirectUrl() below and "Rover cameras" in README.md.
  *
  * Overridable because the rover's link address is the one thing that changes
  * between the bench and a competition network.
  */
-const NANO_HOST = envOr('VITE_NANO_HOST', '10.42.0.1');
-const nanoCamera = (port) => `http://${NANO_HOST}:${port}/?action=stream`;
+const ROVER_HOST = envOr('VITE_ROVER_HOST', envOr('VITE_NANO_HOST', '10.42.0.1'));
+
+/**
+ * The name in the path is the camera's key in rover_cameras' cameras.yaml; the
+ * server routes on `action=stream` and ignores the path, so it is there to make
+ * a tile's URL readable rather than to select the camera — the port does that.
+ */
+const roverCamera = (port, name) => `http://${ROVER_HOST}:${port}/${name}?action=stream`;
 
 /**
  * `group` decides which monitor a camera lands on, replacing the old
@@ -45,27 +50,26 @@ const nanoCamera = (port) => `http://${NANO_HOST}:${port}/?action=stream`;
  * `switchIndex` is the bit in /gs/switches (from console_boards) that gates it.
  */
 export const DEFAULT_CAMERAS = [
-  // Two kinds of entry live here.
+  // One row per port slot in rover_cameras/config/cameras.yaml
+  // (indomitus-rover-core). The port here must be the `port:` pinned there:
+  // that pin is the only thing tying a URL to a physical camera. Slots with no
+  // camera there yet stay dark.
   //
-  // cam1/cam3 are absolute URLs: the two live Nano feeds, read straight by the
-  // browser with no ROS in the path. Rename them in the settings dialog once
-  // their mounting is settled — the operator reads these names.
+  // switchIndex follows the same order, so switch bit N gates the camera on
+  // port 8090+N.
   //
-  // Every other row is a ROS *base* image topic, and all of them are currently
-  // aspirational: the rover Jetson was replaced by a Nano running no ROS, so
-  // nothing publishes them today. Both transports append the `/compressed`
-  // suffix themselves — `ros` mode subscribes to `<topic>/compressed`, and
-  // web_video_server's `ros_compressed` type resolves the same companion — so a
-  // topic written with `/compressed` already on it ends up looking for
-  // `<topic>/compressed/compressed`, which nothing publishes.
-  { id: 'cam1', name: 'Nano Camera 1', topic: nanoCamera(8090), switchIndex: 0, group: 'main' },
-  { id: 'cam2', name: 'Arm End Effector', topic: '/camera/arm/image_raw', switchIndex: 1, group: 'aux' },
-  { id: 'cam3', name: 'Nano Camera 2', topic: nanoCamera(8091), switchIndex: 2, group: 'main' },
-  { id: 'cam4', name: 'Mast Pan/Tilt', topic: '/camera/mast/image_raw', switchIndex: 3, group: 'main' },
-  { id: 'cam5', name: 'Nano Camera 3', topic: nanoCamera(8092), switchIndex: 4, group: 'main' },
-  { id: 'cam6', name: 'Right Stereo', topic: '/camera/right/image_raw', switchIndex: 5, group: 'main' },
-  { id: 'cam7', name: 'Underbelly', topic: '/camera/belly/image_raw', switchIndex: 6, group: 'aux' },
-  { id: 'cam8', name: 'Science Payload', topic: '/camera/science/image_raw', switchIndex: 7, group: 'aux' },
+  // `main` is the left monitor's camera wall — the feeds driving is done on.
+  // `aux` is the right monitor, alongside telemetry: the payload and inspection
+  // cameras, plus the spare Arducam, which is dark unless a mast/front
+  // unit has been swapped out for it.
+  { id: 'zed2i-front', name: 'ZED2i Front (left eye)', topic: roverCamera(8090, 'zed2i-stereo-camera-front'), switchIndex: 0, group: 'main' },
+  { id: 'arducam-mast', name: 'Mast', topic: roverCamera(8091, 'arducam-mast'), switchIndex: 1, group: 'main' },
+  { id: 'arducam-front', name: 'Front', topic: roverCamera(8092, 'arducam-front'), switchIndex: 2, group: 'main' },
+  { id: 'arducam-front-bottom', name: 'Front bottom', topic: roverCamera(8093, 'arducam-front-bottom'), switchIndex: 3, group: 'main' },
+  { id: 'arducam-backup', name: 'Spare Arducam', topic: roverCamera(8094, 'arducam-backup'), switchIndex: 4, group: 'aux' },
+  { id: 'arm-camera', name: 'Arm End Effector', topic: roverCamera(8095, 'arm-camera'), switchIndex: 5, group: 'aux' },
+  { id: 'spectral-front', name: 'Spectral', topic: roverCamera(8096, 'spectral-camera-front'), switchIndex: 6, group: 'aux' },
+  { id: 'thermal-front', name: 'Thermal', topic: roverCamera(8097, 'thermal-camera-front'), switchIndex: 7, group: 'aux' },
 ];
 
 /**
@@ -81,11 +85,13 @@ export const DEFAULT_CAMERAS = [
  * cameras are publishing.
  */
 const PLACEHOLDER_BY_ID = {
-  cam2: gripperCam,
-  cam4: mastCam,
+  'arm-camera': gripperCam,
+  'arducam-mast': mastCam,
 };
 
 const PLACEHOLDER_BY_TOPIC = {
+  // The old ROS camera topics these stand-ins were written for. Kept so a console
+  // still holding the old camera table in localStorage keeps its placeholders.
   '/camera/arm/image_raw': gripperCam,
   '/camera/mast/image_raw': mastCam,
 };
@@ -113,13 +119,14 @@ export const DEFAULT_TOPICS = {
   /** Uncalibrated 0..1000 stick values — what the calibration wizard reads. */
   joyRaw: '/gs/joy/raw',
   /** The console dressed as an SDL gamepad, which is what the arm reads. */
-  armJoy: '/arm/joy',
+  armJoy: '/gs/arm/joy',
   cmdVel: '/rover/cmd_vel',
   servoTwist: '/servo_node/delta_twist_cmds',
   odom: '/rover/odom',
-  battery: '/rover/battery_state',
-  imu: '/rover/imu/data',
-  gps: '/rover/gps/fix',
+  /** rover_power_node; sensor_arm is the other pack. */
+  battery: '/rover/power_monitor/sensor_rover',
+  /** The ZED2i's IMU. */
+  imu: '/rover/zed2i/imu/data',
   rosout: '/rosout',
 };
 
@@ -146,6 +153,15 @@ function defaults() {
     theme: 'dark',
     cameras: DEFAULT_CAMERAS,
     topics: DEFAULT_TOPICS,
+    /**
+     * Off by default: a browser that cannot save straight to the chosen folder
+     * (Firefox, Safari — no File System Access API) or has no folder picked
+     * yet falls back to a plain browser download instead of the save button
+     * just failing. Left off unless an operator opts in, since a download
+     * lands wherever the browser's own downloads setting says, not the
+     * folder configured here — worth knowing about before it happens mid-run.
+     */
+    screenshotDownloadFallback: false,
     /** Node the calibration wizard reconfigures, for its parameter services. */
     joyNode: '/gs/console_boards',
     /** Node the arm-mapping page reconfigures. */
@@ -176,9 +192,24 @@ function defaults() {
     /** Everything scaled down for fine work. */
     grannyBind: { source: 'switches', index: -1 },
     grannyMode: false,
+    /**
+     * Granny's mirror, faster for open ground (multiplier: boostSpeedScale). Bound out of the box, unlike the
+     * other modes: switch 14 is the one latching control the panel has left
+     * over once the cameras, the rover functions and the arm have taken theirs.
+     * Matches boost_switch_index on joy_to_cmd_vel_node.
+     */
+    boostBind: { source: 'switches', index: 14 },
+    boostMode: false,
     /** Stop commanding the rover from this console without killing the node. */
     muteBind: { source: 'switches', index: -1 },
     mute: false,
+    /**
+     * Speed limits on joy_to_cmd_vel_node. Speed at full stick, so it matches linear_x_scale (0.5); the
+     * node bounds them again (max 3 m/s, granny 1.0, boost 10).
+     */
+    maxLinearSpeed: 0.5,
+    grannySpeedScale: 0.1,
+    boostSpeedScale: 1.2,
   };
 }
 
@@ -297,19 +328,31 @@ const LEGACY_TOPICS = {
   switches: { '/switches': '/gs/switches' },
   joy: { '/joy': '/gs/joy' },
   joyRaw: { '/joy/raw': '/gs/joy/raw' },
+  // arm_gamepad_node's output followed the same move: its topic is relative
+  // now, so under gs_bringup's namespace it publishes /gs/arm/joy.
+  armJoy: { '/arm/joy': '/gs/arm/joy' },
   // The same story one namespace over: rover.launch.py pushed every rover node
   // and topic under /rover, so a console that saved its topics before that is
   // still subscribing to names nothing publishes.
   cmdVel: { '/cmd_vel': '/rover/cmd_vel' },
   odom: { '/odom': '/rover/odom' },
-  battery: { '/battery_state': '/rover/battery_state' },
-  imu: { '/imu/data': '/rover/imu/data' },
-  gps: { '/gps/fix': '/rover/gps/fix' },
+  // Then the real publishers turned out to live elsewhere: battery on the
+  // power monitor, IMU on the ZED2i.
+  battery: {
+    '/battery_state': '/rover/power_monitor/sensor_rover',
+    '/rover/battery_state': '/rover/power_monitor/sensor_rover',
+  },
+  imu: {
+    '/imu/data': '/rover/zed2i/imu/data',
+    '/rover/imu/data': '/rover/zed2i/imu/data',
+  },
 };
 
 function migrateTopics(saved) {
   const out = { ...DEFAULT_TOPICS };
   for (const [key, value] of Object.entries(saved || {})) {
+    // Drops settings for topics the UI no longer reads (e.g. gps).
+    if (!(key in DEFAULT_TOPICS)) continue;
     if (typeof value !== 'string' || !value) continue;
     out[key] = LEGACY_TOPICS[key]?.[value] ?? value;
   }
@@ -329,6 +372,7 @@ function normalize(raw) {
     theme: merged.theme === 'light' ? 'light' : 'dark',
     cameras: normalizeCameras(merged.cameras),
     topics: migrateTopics(merged.topics),
+    screenshotDownloadFallback: Boolean(merged.screenshotDownloadFallback),
     // serial_joy_node and switch_reader_node were merged into one node. A
     // console that saved its settings before that has the old name in
     // localStorage, and pointing the wizard at a node that no longer exists
@@ -348,9 +392,19 @@ function normalize(raw) {
     vyEnabled: Boolean(merged.vyEnabled),
     grannyBind: normalizeModeBind(merged.grannyBind),
     grannyMode: Boolean(merged.grannyMode),
+    boostBind: normalizeModeBind(merged.boostBind),
+    boostMode: Boolean(merged.boostMode),
     muteBind: normalizeModeBind(merged.muteBind),
     mute: Boolean(merged.mute),
+    maxLinearSpeed: finiteOr(merged.maxLinearSpeed, base.maxLinearSpeed),
+    grannySpeedScale: finiteOr(merged.grannySpeedScale, base.grannySpeedScale),
+    boostSpeedScale: finiteOr(merged.boostSpeedScale, base.boostSpeedScale),
   };
+}
+
+function finiteOr(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 
 let current = normalize({ ...readStorage(), ...readQuery() });
@@ -373,7 +427,7 @@ function emit() {
  *
  * The console is not one page: `/`, `/left` and `/right` are opened as separate
  * windows on separate screens, and each runs its own copy of this module with
- * its own `current`. The Control box is only on the left monitor, while the
+ * its own `current`. The Control box is only on the right monitor, while the
  * settings dialog is usually driven from another one — so applying a bind
  * updated the window that sent it and left the panel that labels the switches
  * showing the previous wiring until someone reloaded it. From the operator's
@@ -458,8 +512,12 @@ const PASSTHROUGH_TYPE = 'ros_compressed';
 // A '/' is legal in a query string unescaped, and a valid ROS topic name
 // contains nothing else that needs escaping, so build the query by hand.
 function videoQuery(topic, quality, width) {
+  // web_video_server and the rosbridge feed both append their own transport
+  // suffix, so a camera entered as '.../compressed' would subscribe a raw
+  // Image to a name that only carries CompressedImage.
+  const base = String(topic).replace(/\/compressed$/, '');
   const parts = [
-    `topic=${topic}`,
+    `topic=${base}`,
     `type=${PASSTHROUGH_TYPE}`,
     `quality=${quality}`,
   ];
@@ -472,11 +530,11 @@ function videoQuery(topic, quality, width) {
  * topic at all: it is an MJPEG source the browser talks to directly, with no
  * rover-side ROS and no web_video_server in the path.
  *
- * This exists for cameras hanging off a machine that cannot run Humble — the
- * Jetson Nano on Ubuntu 18.04, where the whole ROS layer is unavailable but
- * `mjpg-streamer` relaying the camera's native MJPEG is not. Such a feed loses
- * what ROS transport buys (recording, per-frame timestamps, the `ros` mode's
- * frame-age readout); it keeps switch gating, which is decided in the UI.
+ * This is how every rover camera arrives (rover_cameras' MJPEG server): video
+ * over DDS on the Wi-Fi link costs far more. Such a feed loses the `ros`
+ * mode's per-frame timestamps and frame-age readout; it keeps switch gating,
+ * which is decided in the UI. Dataset capture is done on the rover, over ROS
+ * services (/rover/cameras/capture, …/record).
  */
 export function isDirectUrl(topic) {
   return /^https?:\/\//i.test(String(topic || ''));

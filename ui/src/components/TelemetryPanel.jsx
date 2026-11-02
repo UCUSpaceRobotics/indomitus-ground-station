@@ -11,13 +11,6 @@ import {
   twistSpeed,
 } from '../lib/format';
 
-const FIX_STATUS = {
-  '-1': 'no fix',
-  0: 'fix',
-  1: 'SBAS',
-  2: 'GBAS',
-};
-
 function batteryTone(percent) {
   if (percent === null) return 'default';
   if (percent < 15) return 'crit';
@@ -43,12 +36,10 @@ export default function TelemetryPanel() {
     renderMs: 500,
   });
   const imu = useTopic(config.topics.imu, 'sensor_msgs/Imu', { throttleMs: 200, renderMs: 200 });
-  const gps = useTopic(config.topics.gps, 'sensor_msgs/NavSatFix', { throttleMs: 500, renderMs: 500 });
 
   const odomStale = isStale(odom.receivedAt, now, 2000);
   const batteryStale = isStale(battery.receivedAt, now, 10_000);
   const imuStale = isStale(imu.receivedAt, now, 2000);
-  const gpsStale = isStale(gps.receivedAt, now, 10_000);
 
   const pose = odom.message?.pose?.pose;
   const speed = twistSpeed(odom.message?.twist?.twist);
@@ -67,7 +58,6 @@ export default function TelemetryPanel() {
   const voltage = battery.message?.voltage;
   const current = battery.message?.current;
 
-  const fix = gps.message?.status?.status;
 
   return (
     <Panel icon={Activity} title="Telemetry" bodyClassName="stack">
@@ -128,28 +118,6 @@ export default function TelemetryPanel() {
           }`}
           noData={batteryStale || typeof voltage !== 'number' || !Number.isFinite(voltage)}
           title={config.topics.battery}
-        />
-      </div>
-
-      <div className="readout-group">
-        <Readout
-          icon={MapPin}
-          label="GNSS"
-          value={
-            gps.message
-              ? `${fmtNumber(gps.message.latitude, 5)}, ${fmtNumber(gps.message.longitude, 5)}`
-              : ''
-          }
-          tone={fix === -1 ? 'warn' : 'default'}
-          noData={gpsStale || !gps.message}
-          title={config.topics.gps}
-        />
-        <Readout
-          label="Fix"
-          value={FIX_STATUS[String(fix)] ?? 'unknown'}
-          tone={fix === -1 ? 'warn' : fix === undefined ? 'default' : 'ok'}
-          noData={gpsStale || fix === undefined}
-          title={config.topics.gps}
         />
       </div>
     </Panel>

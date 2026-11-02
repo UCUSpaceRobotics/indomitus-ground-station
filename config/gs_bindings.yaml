@@ -9,8 +9,7 @@
       false}, {"function": "light_blue", "source": "switches", "index": 22, "invert":
       false}]'
     camera_switches:
-    - 5
-    - 3
     - 2
+    - 3
     - 4
-    - 1
+    - 3

@@ -25,16 +25,16 @@ export default function Home() {
       <div className="home">
         <div className="home-cards">
           <Link to="/left" className="home-card">
-            <Monitor size={30} />
-            <h2>Left monitor</h2>
-            <p>Telemetry, command path, control box and rover log</p>
-            <span className="muted">{auxCameras.length} cameras</span>
-          </Link>
-          <Link to="/right" className="home-card">
             <LayoutDashboard size={30} />
-            <h2>Right monitor</h2>
+            <h2>Left monitor</h2>
             <p>Primary camera wall</p>
             <span className="muted">{mainCameras.length} cameras</span>
+          </Link>
+          <Link to="/right" className="home-card">
+            <Monitor size={30} />
+            <h2>Right monitor</h2>
+            <p>Telemetry, command path, control box and rover log</p>
+            <span className="muted">{auxCameras.length} cameras</span>
           </Link>
         </div>
 

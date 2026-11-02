@@ -29,7 +29,7 @@ function levelKey(level) {
  * This replaces a hard-coded four-line "command log" that printed the same
  * fictional startup messages regardless of what the rover was doing.
  */
-export default function ConsoleLog() {
+export default function ConsoleLog({ collapsible = false, collapsed = false, onToggleCollapse }) {
   const config = useConfig();
   const { status } = useRos();
   const [minLevel, setMinLevel] = useState(20);
@@ -74,6 +74,9 @@ export default function ConsoleLog() {
       title="Rover log"
       className="panel-fill"
       bodyClassName="console"
+      collapsible={collapsible}
+      collapsed={collapsed}
+      onToggleCollapse={onToggleCollapse}
       actions={
         <div className="console-controls">
           <label className="field-inline">
@@ -132,7 +135,7 @@ export default function ConsoleLog() {
           })
         )}
       </div>
-      {paused && <div className="console-paused">Paused — {entries.length} buffered</div>}
+      {paused && !(collapsible && collapsed) && <div className="console-paused">Paused — {entries.length} buffered</div>}
     </Panel>
   );
 }
