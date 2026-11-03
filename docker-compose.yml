@@ -45,6 +45,9 @@ services:
       - ./:/work:rw
       - ./src:/opt/ws/src:rw
       - /dev:/dev
+      # The container's own UI dependencies, over the checkout's ui/node_modules:
+      # npm here never touches the host's, see docker/ui-dev.sh.
+      - gs_ui_node_modules:/work/ui/node_modules
     group_add:
       - dialout
 
@@ -52,6 +55,8 @@ services:
     # sources moved, then execs this. The launch runs in tmux session `gs`, so it
     # can be stopped/restarted without the container: scripts/enter_container.sh gs gs
     # (Ctrl-C, Up, Enter). On `docker stop` the launch gets Ctrl-C first.
+    # The UI dev server runs next to it in session `ui` (docker/ui-dev.sh, port
+    # 5173): scripts/enter_container.sh gs ui. GS_USE_UI=false leaves it out.
     command: >
       bash -c 'tmux new-session -d -s gs &&
       tmux send-keys -t gs "ros2 launch gs_bringup gs.launch.py
@@ -59,7 +64,10 @@ services:
       use_comms:=${GS_USE_COMMS:-true}
       use_rosbridge:=${GS_USE_ROSBRIDGE:-true}
       use_video:=${GS_USE_VIDEO:-true}" Enter;
-      trap "tmux send-keys -t gs C-c; sleep 5; tmux kill-server; exit 0" TERM INT;
+      if [ "${GS_USE_UI:-true}" = true ]; then
+      tmux new-session -d -s ui &&
+      tmux send-keys -t ui "/work/docker/ui-dev.sh" Enter; fi;
+      trap "tmux send-keys -t gs C-c; tmux send-keys -t ui C-c 2>/dev/null; sleep 5; tmux kill-server; exit 0" TERM INT;
       sleep infinity & wait'
 
     # Health is "the browser can reach us", not "the process is alive": a
@@ -72,3 +80,6 @@ services:
       retries: 3
       # First start compiles the workspace, which is minutes, not seconds.
       start_period: 300s
+
+volumes:
+  gs_ui_node_modules:
