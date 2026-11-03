@@ -25,6 +25,10 @@ Port 9090 is already published by the repository's `docker-compose.yml`; add
 
 ## Running
 
+The GS container already runs `npm run dev` in tmux session `ui`
+(`docker/ui-dev.sh`, dependencies in a docker volume) - nothing to start by hand.
+On the host instead (container started with `GS_USE_UI=false`):
+
 ```bash
 cd ui
 npm install

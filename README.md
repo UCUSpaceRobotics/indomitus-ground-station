@@ -23,11 +23,14 @@ docker compose up -d
 ```bash
 scripts/enter_container.sh gs            # GS container (started if needed)
 scripts/enter_container.sh gs gs         # GS launch in tmux: Ctrl-C stops it, Up Enter restarts
+scripts/enter_container.sh gs ui         # UI dev server in tmux (http://localhost:5173)
 scripts/enter_container.sh rover core    # rover container / tmux session, same as in rover-core
 ```
 
 - `docker/docker-compose.gs.yaml` runs `gs.launch.py` in tmux session `gs`; the container
   stays up when the launch is stopped. `docker stop gs` sends it Ctrl-C first.
+- Next to it, session `ui` runs the UI dev server (`docker/ui-dev.sh`): no Node or
+  `npm install` on the host. `GS_USE_UI=false` in `.env` leaves it out.
 - Same commands as rover-core's `scripts/enter_container.sh`; `rover` calls that script, so
   rover-core must be checked out next to this repo (or set `ROVER_CORE_DIR`).
 - `rover` always adds `-n`: the GS reaches the rover over the mast link and must not switch its
@@ -255,13 +258,13 @@ docker compose exec gs bash
 ros2 launch gs_bringup gs.launch.py use_joy:=false use_comms:=false
 ```
 
-The UI itself runs on the host, not in the container:
-
-```bash
-cd ui
-npm install
-npm run dev     # http://localhost:5173, also reachable from the LAN
-```
+The UI starts with the container in tmux session `ui` (http://localhost:5173, also
+reachable from the LAN). Its dependencies live in the container (docker volume
+`gs_ui_node_modules`) and are reinstalled only when `ui/package-lock.json` changes.
+Running it on the host instead (`cd ui && npm install && npm run dev`) still works;
+set `GS_USE_UI=false` so the two don't fight over port 5173. The volume's mount point
+makes docker create an empty, root-owned `ui/node_modules` in the checkout; before a
+host `npm install`, `sudo rm -rf ui/node_modules` once.
 
 See `ui/README.md` for configuration and `ui/COMMANDS.md` for the full command
 list.
